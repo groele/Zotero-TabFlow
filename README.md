@@ -1,23 +1,88 @@
 # Zotero TabFlow
 
-**Zotero TabFlow** (`v17.1.0`) is a Zotero 10–12 productivity plugin in the Zotero Flow suite that unifies horizontal tab grouping, a collapsible vertical tabs sidebar, pinned tabs, reader tab sleep, custom tab remarks, workspace session snapshots, collection auto-grouping, Spotlight quick search (`Ctrl+P`), and one-click PDF folder navigation.
+**Zotero TabFlow**（当前版本 `v17.1.0`）是一款面向 **Zotero 10 ~ 12** 的多标签页与科研阅读工作区整合插件，融合了 Zotero 生态中多款高口碑标签管理插件的高价值特性，并提供全功能独立设置开关。
 
-## Key Features
-- **Dual-Mode Tab Organization**: Edge-style horizontal grouped tab bar and collapsible/resizable vertical sidebar (`Custom Groups` / `Collection` / `Status` views), each independently toggleable in Settings.
-- **Pinned Tabs, Tab Sleep & Virtual Members**: Pin key papers (`📌`), suspend inactive background reader tabs to save memory, and retain closed grouped tabs as virtual members for one-click reload.
-- **Inline Group Editing & Drag-and-Drop**: Double-click any group header to rename inline; drag tabs to stack-create groups, reorder, or spring-open collapsed groups.
-- **Tab Remarks & Hover Preview**: Add up to 300-character custom aliases without altering original PDF filenames, plus hover metadata cards (authors, venue, collection, last-read time).
-- **Collection Auto-Grouping & Sessions**: Automatically group newly opened papers by Zotero collection with configurable multi-collection disambiguation, and save/restore named workspace sessions.
-- **Spotlight (`Ctrl+P`) & Stale Cleanup**: Instant fuzzy search across open tabs, remarks, collections, and commands, plus stale-tab cleanup suggestions.
-- **One-Click PDF Folder Jump**: Dedicated icon in Zotero's right-hand Item Pane sidenav and hover action in the vertical sidebar.
+> **⚠️ 个人自用与备份声明**  
+> 本仓库主要用于**个人科研工作流自用与代码备份**，按个人使用习惯对多项生态插件的设计理念进行了整合与重构，与 Zotero 官方及各上游参考插件作者无隶属关系。如您在自用或二次修改过程中遇到问题，请结合自身 Zotero 版本环境自行评估与测试。
 
-## Development & Build
+---
+
+## 一、核心整合功能详解
+
+### 1. 双模协同标签布局（水平分组 + 垂直侧栏）
+- **Edge 风格水平分组栏**：在顶部标签栏直接渲染可折叠的彩色分组胶囊、未分组区域及置顶固定区；支持鼠标滚轮横向滚动。
+- **原生质感垂直标签侧边栏**：挂载于主内容区左侧，支持拖拽右边缘实时调宽（200px–440px）、一键收起为 `0px`（不占用任何左侧空间，从顶栏按钮随时唤出），并提供 **「分组 / 集合 / 状态」** 三种视图切换与实时搜索过滤。
+
+### 2. 三态生命周期（固定 · 休眠 · 虚拟保留）
+- **固定标签（Pinned Tabs）**：将核心文献或写作大纲固定在最前，防止误关，并自动豁免后台休眠与久未查看清理。
+- **阅读器休眠（Tab Sleep）**：支持单篇右键或一键「休眠后台非固定标签」，挂起不活跃阅读器实例以释放内存，点击即可秒唤醒。
+- **虚拟保留成员（Virtual Members）**：关闭已分组的阅读器标签页后，仍在分组中保留虚线占位记录，支持点击重新加载或右键「打开组内全部虚拟文献」。
+
+### 3. 原位交互与直觉拖拽
+- **原位双击重命名与新建**：双击顶栏或侧栏任意分组标题（含默认分组），直接在原位进入输入框编辑（`Enter` 保存、`Esc` 取消），无需弹出额外对话框；点击 `+` 同样支持原位输入新建分组。
+- **拖拽排序与叠放建组**：
+  - 拖动标签到另一标签的左右 25% 区域可调整排序；拖动未分组标签叠放到另一未分组标签中部可直接合并新建分组。
+  - 拖动标签悬停在已折叠分组标题上 `600ms` 自动**弹簧展开**。
+  - 添加/打开新文献或切换选中标签时，自动展开其所在分组。
+- **中键关闭与自动滚动**：支持鼠标中键快速关闭标签页；切换标签时自动将其滚动至可视区域。
+
+### 4. 标签备注别名、排版与悬停预览
+- **自定义备注别名**：支持为任意标签添加最多 `300` 字符的备注（不修改原 PDF 文件名），并可按单篇或全局切换 **「备注 + 原标题 / 仅显示备注 / 仅显示原标题」**。
+- **侧栏排版自定义**：支持配置主标题（完整标题 / 短标题 / 附件文件名）、副标题（期刊会议来源 / 作者与年份 / 所属 Zotero 集合 / 不显示）、行高与字号。
+- **悬停阅读信息卡片**：鼠标悬停侧栏标签时，浮现完整标题、作者、刊名、所属集合、上次阅读时间与备注。
+
+### 5. 按集合自动归组 & 工作区会话快照
+- **按 Zotero 集合自动归组**：支持一键将未分组标签按所属 Zotero 集合归组，也可开启「新开标签自动归组」；针对文献同属多个集合的情况，提供 **「优先当前浏览集合 / 优先已有分组 / 首个集合」** 三种消歧规则。
+- **工作区会话快照（Sessions）**：一键保存当前分组结构、固定标签与已打开文献列表为命名会话，支持随时恢复并自动重新打开会话记录的文献。
+
+### 6. Spotlight 搜索、久未查看清理与右键/侧栏增强
+- **全局 Spotlight（`Ctrl+P` / `Cmd+P`）**：随时呼出命令面板，同时模糊检索已开标签、备注、所属集合与快捷命令。
+- **久未查看建议关闭**：自动追踪文献的首次与最后查看时间，汇总超过设定天数阈值（默认 7 天，1–3650 天可调）的标签，支持单篇/批量休眠或关闭。
+- **全链路右键增强**：标签右键支持复制引用、定位附件文件夹、重载标签、在文库定位；分组右键支持**「复制组内全部引用」**与**「仅打开本组（关闭其他）」**；文献库条目右键支持**「TabFlow：打开并分组」**。
+- **一键跳转 PDF 附件文件夹**：在 Zotero 右侧条目详情侧边栏（Sidenav）注册独立文件夹图标，同时在左侧 TabFlow 侧栏每行提供快捷文件夹按钮，一键定位 PDF 所在本地目录。
+
+### 7. 全功能独立开关
+所有核心能力（水平分组、垂直侧栏、固定标签、虚拟成员、集合自动归组、多集合规则、备注别名、悬停预览、Spotlight、会话快照、阅读器休眠、久未查看提醒、标签右键动作、条目右键菜单、右侧 PDF 文件夹图标等）均在 Zotero 设置面板提供独立开关，可按需开启或关闭。
+
+---
+
+## 二、参考与致敬的开源插件
+
+本插件在设计与实现过程中深入调研并参考了以下开源 Zotero 插件的优秀思路与交互细节（特此致谢）：
+
+| 参考插件 | 仓库地址 | 主要参考特性 | 上游协议 |
+|---|---|---|---|
+| **Tab Enhance** | https://github.com/Rphone/zotero-tab-enhance | 垂直标签侧栏、三视图、持久化虚拟分组、标题/副标题排版、右键增强 | AGPL-3.0 |
+| **Tab Manager** | https://github.com/Ueky2000/zotero-tab-manager | 行内水平分组、300 字备注别名、久未查看建议关闭、快速搜索、弹簧展开 | AGPL-3.0 |
+| **Zotero Tab Manager** | https://github.com/rg4sun/zotero-tab-manager | Edge 风格水平彩色分组、拖动两标签叠放建组 | AGPL-3.0 |
+| **Weavero** | https://github.com/mjthoraval/Weavero | 固定标签（Pinned）、工作区会话保存与恢复、Zotero 10+ 现代架构 | AGPL-3.0 |
+| **Better Vertical Tabs** | https://github.com/LightWindW/zotero-better-vertical-tabs | 阅读器资源管理（休眠释放内存）、作者/刊名/上次阅读时间、悬停预览 | AGPL-3.0 |
+| **Vertical Tab Groups** | https://github.com/Daniel-Addae/zotero-vertical-tab-groups | 文献集合与垂直标签共存视图 | MIT |
+| **Group Tabs by Collection** | https://github.com/ppavlidis/group-tabs-by-collection | 按所属文献集合自动归组及多集合归属规则 | 未确认 |
+| **Tab Groups** | https://github.com/shourovj/zotero-tab-groups | 标签分组与拖拽排序交互 | AGPL-3.0 |
+| **GroupTag** | https://github.com/Ares960826/zotero-grouptag | Chrome 风格分组视觉与底色指示条 | 未确认 |
+| **Spotlight** | https://github.com/Royshare/zotero-spotlight | `Ctrl+P` 全局命令面板与瞬时跳转体验 | 未确认 |
+
+---
+
+## 三、开发、测试与打包
+
+环境要求：Node.js `>= 22.14`、PowerShell（用于打包 `.xpi`）。
 
 ```bash
+# 安装开发依赖
 npm install
+
+# 运行类型检查、esbuild 打包、架构守卫、语法校验与单元测试
 npm test
+
+# 构建并输出 .xpi 安装包至 dist/ 目录（同步更新 update.json SHA-512）
 pwsh -NoProfile -File scripts/build.ps1 -UpdateFeed
 ```
 
-## License
-AGPL-3.0-or-later
+---
+
+## 四、版权与开源协议
+
+本项目采用 **[GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later)](LICENSE)** 协议开源。  
+鉴于本插件参考并吸收了多款采用 AGPL-3.0 协议的开源 Zotero 插件的设计思路与交互规范，本项目同样以 AGPL-3.0-or-later 发布，完整保留原作者版权信息与开源传递性要求。
