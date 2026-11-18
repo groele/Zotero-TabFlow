@@ -66,6 +66,9 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 #ztf-inline .ztf-section {
   position: relative; display: inline-flex; align-items: center; flex: none; height: var(--ztf-tab-height); gap: 4px; box-sizing: border-box;
 }
+#ztf-inline .ztf-section-body { display: contents; }
+#ztf-inline .ztf-heading[hidden], #ztf-inline .ztf-section-body[hidden],
+.ztf-sb-group-head[hidden], .ztf-sb-group-body[hidden] { display: none; }
 #ztf-inline .ztf-section::after {
   content: ""; position: absolute; left: 2px; right: 2px; bottom: -3px; height: 2px; border-radius: 1px;
   background: color-mix(in srgb, var(--ztf-color, transparent) 65%, transparent); pointer-events: none;
@@ -174,10 +177,13 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 .ztf-sb-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 6px 10px; display: flex; flex-direction: column; gap: 4px; }
 .ztf-sb-group-head {
   display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 5px;
-  font-size: 11px; font-weight: 600; color: var(--ztf-muted); cursor: pointer; user-select: none;
+  width: 100%; box-sizing: border-box; border: 0; background: transparent; text-align: start;
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--ztf-muted); user-select: none;
 }
-.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-text); }
-.ztf-sb-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+button.ztf-sb-group-head { cursor: pointer; }
+button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-text); }
+.ztf-sb-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ztf-group-dot); }
+.ztf-sb-group > .ztf-group-edit { width: 100%; max-width: none; height: 24px; }
 .ztf-sb-group-body { display: flex; flex-direction: column; gap: 1px; padding-left: 2px; }
 
 .ztf-sb-row {

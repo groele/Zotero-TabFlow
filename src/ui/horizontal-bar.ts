@@ -6,6 +6,7 @@ import type { ActivityTrackerService } from '../services/activity-tracker.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { HorizontalDragController } from './horizontal-drag.ts';
+import { GroupSection, reconcileGroupSections } from './group-section.ts';
 import { createSvgIcon } from './icons.ts';
 import type { PopoverController } from './popovers.ts';
 import type { SpotlightController } from './spotlight.ts';
@@ -17,7 +18,8 @@ export class HorizontalBarController {
 	private toolbarActions: HTMLDivElement | null = null;
 	private drag: HorizontalDragController;
 	private lastSelectedID = '';
-	private headingClickTimer: number | null = null;
+	private groupSections = new Map<string, GroupSection>();
+	private addGroupButton: HTMLButtonElement | null = null;
 
 	constructor(
 		private readonly win: Window,
@@ -90,15 +92,17 @@ export class HorizontalBarController {
 		const enabled = getPref('enableHorizontalGroups');
 		const mounted = enabled && Boolean(this.root?.isConnected);
 		host.toggleAttribute('data-ztf-inline', mounted);
+		if (!mounted) {
+			if (this.pinnedStrip) this.pinnedStrip.hidden = true;
+			for (const group of this.groupSections.values()) group.pause();
+		}
 		if (this.root) this.root.hidden = !mounted;
-		if (!mounted && this.pinnedStrip) this.pinnedStrip.hidden = true;
 		this.renderToolbarButtons();
-		if (!mounted || !this.root || this.root.querySelector('.ztf-inline-edit')) return;
+		if (!mounted || !this.root || this.root.querySelector('.ztf-inline-edit:not(.ztf-group-edit)')) return;
 
 		const tracked = this.meta.buildTrackedTabs();
 		const selectedID = this.meta.getSelectedTabID();
 		const scroll = this.root.scrollLeft;
-		this.root.textContent = '';
 
 		const pinnedTabs = getPref('enablePinnedTabs') ? tracked.filter((t) => t.pinned) : [];
 		if (this.pinnedStrip) {
@@ -121,44 +125,34 @@ export class HorizontalBarController {
 		}
 
 		const unpinned = tracked.filter((t) => !t.pinned);
-		for (const g of this.store.orderedGroups()) {
-			const section = this.h('div', 'ztf-section');
-			section.style.setProperty('--ztf-color', g.color);
-			section.style.setProperty('--ztf-ink', contrastInk(g.color));
+		const groups = this.store.orderedGroups();
+		for (const g of groups) {
+			let section = this.groupSections.get(g.id);
+			if (!section) {
+				section = new GroupSection(this.win, this.doc, {
+					section: 'ztf-section',
+					heading: `ztf-heading${!g.id ? ' ztf-ungrouped' : ''}`,
+					body: 'ztf-section-body',
+				}, (closed) => this.store.setCollapsed(g.id, closed),
+				(name) => this.store.renameGroup(g.id, name));
+				section.heading.onmousedown = (event) => event.stopPropagation();
+				this.groupSections.set(g.id, section);
+			}
+			section.element.style.setProperty('--ztf-color', g.color);
+			section.element.style.setProperty('--ztf-ink', contrastInk(g.color));
 			const collapsed = this.store.state.collapsed.includes(g.id);
 			const members = unpinned.filter((t) => t.groupId === g.id);
 			const virtuals = getPref('enableVirtualMembers')
 				? Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === g.id)
 				: [];
 
-			const heading = this.h('button', `ztf-heading${!g.id ? ' ztf-ungrouped' : ''}`);
-			heading.type = 'button';
-			heading.textContent = `${collapsed ? '▸' : '▾'} ${g.name} (${members.length + virtuals.length})`;
-			heading.title = heading.textContent;
-			heading.setAttribute('aria-expanded', String(!collapsed));
-			heading.onmousedown = (e: Event) => e.stopPropagation();
-			heading.onclick = (e: Event) => {
-				e.stopPropagation();
-				if (this.headingClickTimer !== null) this.win.clearTimeout(this.headingClickTimer);
-				this.headingClickTimer = this.win.setTimeout(() => {
-					this.headingClickTimer = null;
-					this.store.setCollapsed(g.id, !collapsed);
-				}, 210);
-			};
-			heading.ondblclick = (e: Event) => {
-				e.stopPropagation();
-				if (this.headingClickTimer !== null) {
-					this.win.clearTimeout(this.headingClickTimer);
-					this.headingClickTimer = null;
-				}
-				this.beginInlineEdit(heading, g.name, (next) => this.store.renameGroup(g.id, next));
-			};
-			heading.oncontextmenu = (e: Event) => this.menus.openGroupMenu(e as MouseEvent, g);
-			this.drag.bindGroupDrag(heading, g.id, collapsed);
-			section.append(heading);
+			section.update(g, collapsed, members.length + virtuals.length);
+			section.heading.oncontextmenu = (e: Event) => this.menus.openGroupMenu(e as MouseEvent, g);
+			this.drag.bindGroupDrag(section.heading, g.id, collapsed);
 
 			if (!collapsed) {
-				for (const t of members) section.append(this.buildTabNode(t, selectedID));
+				const nodes = this.doc.createDocumentFragment();
+				for (const t of members) nodes.append(this.buildTabNode(t, selectedID));
 				for (const v of virtuals) {
 					const vNode = this.h('button', 'ztf-doc ztf-virtual');
 					vNode.type = 'button';
@@ -168,20 +162,22 @@ export class HorizontalBarController {
 					vNode.title = `虚拟保留成员（点击重新加载）：${v.title}`;
 					vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id).then(this.onRefresh);
 					vNode.oncontextmenu = (e: Event) => this.menus.openVirtualMenu(e as MouseEvent, v, g.id);
-					section.append(vNode);
+					nodes.append(vNode);
 				}
+				section.body.replaceChildren(nodes);
 			}
-			this.root.append(section);
 		}
 
-		const addBtn = this.h('button', 'ztf-add-group');
-		addBtn.type = 'button';
-		addBtn.append(createSvgIcon(this.doc, 'plus', 13));
-		addBtn.title = '新建分组';
-		addBtn.onclick = () => {
-			this.beginInlineEdit(addBtn, '', (next) => this.store.ensureGroup(next), '新分组名称…');
-		};
-		this.root.append(addBtn);
+		if (!this.addGroupButton) {
+			const addBtn = this.h('button', 'ztf-add-group');
+			addBtn.type = 'button';
+			addBtn.append(createSvgIcon(this.doc, 'plus', 13));
+			addBtn.title = '新建分组';
+			addBtn.onclick = () => this.beginInlineEdit(addBtn, '', (next) => this.store.ensureGroup(next), '新分组名称…');
+			this.root.append(addBtn);
+			this.addGroupButton = addBtn;
+		}
+		reconcileGroupSections(this.root, this.groupSections, groups.map((g) => g.id), this.addGroupButton);
 		this.root.scrollLeft = scroll;
 		if (selectedID && selectedID !== this.lastSelectedID) {
 			this.lastSelectedID = selectedID;
@@ -285,16 +281,15 @@ export class HorizontalBarController {
 	}
 
 	dispose(): void {
-		if (this.headingClickTimer !== null) {
-			this.win.clearTimeout(this.headingClickTimer);
-			this.headingClickTimer = null;
-		}
+		for (const group of this.groupSections.values()) group.dispose();
+		this.groupSections.clear();
 		this.drag.clear();
 		this.doc.getElementById('tab-bar-container')?.removeAttribute('data-ztf-inline');
 		this.root?.remove();
 		this.pinnedStrip?.remove();
 		this.toolbarActions?.remove();
 		this.root = null;
+		this.addGroupButton = null;
 		this.pinnedStrip = null;
 		this.toolbarActions = null;
 	}

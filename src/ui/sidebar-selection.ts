@@ -65,7 +65,8 @@ export class SidebarSelection {
 	}
 
 	private visibleCheckboxes(): HTMLInputElement[] {
-		return [...this.list.querySelectorAll<HTMLInputElement>('.ztf-batch-check')];
+		return [...this.list.querySelectorAll<HTMLInputElement>('.ztf-batch-check')]
+			.filter((checkbox) => !checkbox.closest('[hidden]'));
 	}
 
 	beginRender(tracked: TrackedTab[]): void {

@@ -3,6 +3,7 @@ import type { TabFlowStore } from '../core/store.ts';
 import type { SidebarViewMode, TrackedTab } from '../core/types.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
+import { GroupSection, reconcileGroupSections } from './group-section.ts';
 import { createSvgIcon, type IconName } from './icons.ts';
 import { SidebarHoverCard } from './sidebar-hover.ts';
 import { SidebarSelection } from './sidebar-selection.ts';
@@ -16,6 +17,7 @@ export class VerticalSidebarController {
 	private hoverCard: SidebarHoverCard;
 	private viewMode: SidebarViewMode = 'groups';
 	private draggedKey: string | null = null;
+	private groupSections = new Map<string, GroupSection>();
 
 	constructor(
 		private readonly win: Window,
@@ -140,9 +142,14 @@ export class VerticalSidebarController {
 		if (!this.sidebar) return;
 		const enabled = getPref('enableVerticalSidebar');
 		const collapsed = getPref('verticalSidebarCollapsed');
+		if (!enabled || collapsed) {
+			for (const group of this.groupSections.values()) group.pause();
+		}
 		this.sidebar.hidden = !enabled || collapsed;
 		this.sidebar.classList.toggle('collapsed', collapsed);
-		if (!enabled || collapsed) return;
+		if (!enabled || collapsed) {
+			return;
+		}
 
 		this.sidebar.style.setProperty('--ztf-sb-width', `${getPref('verticalSidebarWidth')}px`);
 		this.sidebar.style.setProperty('--ztf-row-height', `${getPref('verticalTabRowHeight')}px`);
@@ -162,17 +169,21 @@ export class VerticalSidebarController {
 			return `${t.title} ${t.shortTitle} ${t.filename} ${t.collection} ${r}`.toLowerCase().includes(q);
 		});
 
-		this.listEl.textContent = '';
 		if (this.viewMode === 'groups') {
-			for (const g of this.store.orderedGroups()) {
+			if (!this.groupSections.size) this.listEl.replaceChildren();
+			const groups = this.store.orderedGroups();
+			for (const g of groups) {
 				const members = allTracked.filter((t) => t.groupId === g.id);
 				const virtuals = getPref('enableVirtualMembers')
 					? Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === g.id)
 					: [];
 				const collapsed = this.store.state.collapsed.includes(g.id);
-				const sec = this.buildSection(g.name, g.color, members.length + virtuals.length, collapsed, () => this.store.setCollapsed(g.id, !collapsed), (e) => this.menus.openGroupMenu(e, g), g.id, () => this.beginSidebarRename(sec, g.id, g.name));
+				const section = this.getGroupSection(g.id);
+				section.element.style.setProperty('--ztf-group-dot', g.color);
+				section.update(g, collapsed, members.length + virtuals.length);
+				section.heading.oncontextmenu = (e: Event) => this.menus.openGroupMenu(e as MouseEvent, g);
 				if (!collapsed) {
-					const body = sec.querySelector('.ztf-sb-group-body')!;
+					const body = this.doc.createDocumentFragment();
 					for (const t of members) body.append(this.buildRow(t, selectedID));
 					for (const v of virtuals) {
 						const row = this.h('div', 'ztf-sb-row virtual');
@@ -187,19 +198,22 @@ export class VerticalSidebarController {
 						row.oncontextmenu = (e: Event) => this.menus.openVirtualMenu(e as MouseEvent, v, g.id);
 						body.append(row);
 					}
+					section.body.replaceChildren(body);
 				}
-				this.listEl.append(sec);
 			}
+			reconcileGroupSections(this.listEl, this.groupSections, groups.map((g) => g.id));
 			this.selection?.updateControls();
 			return;
 		}
 
+		this.clearGroupSections();
+		this.listEl.replaceChildren();
 		if (this.viewMode === 'collection') {
 			const cols = [...new Set(allTracked.map((t) => t.collection))];
 			cols.forEach((col, i) => {
 				const items = allTracked.filter((t) => t.collection === col);
 				const colors = ['#3977d5', '#21866a', '#8b5ac7', '#dc8225'];
-				const sec = this.buildSection(col, colors[i % colors.length], items.length, false, () => {});
+				const sec = this.buildSection(col, colors[i % colors.length], items.length);
 				const body = sec.querySelector('.ztf-sb-group-body')!;
 				for (const t of items) body.append(this.buildRow(t, selectedID));
 				this.listEl!.append(sec);
@@ -212,7 +226,7 @@ export class VerticalSidebarController {
 			['已加载阅读器', '#16a34a', allTracked.filter((t) => t.status === 'active')],
 			['已休眠省内存', '#d97706', allTracked.filter((t) => t.status === 'sleeping')],
 		] as const) {
-			const sec = this.buildSection(label, color, items.length, false, () => {});
+			const sec = this.buildSection(label, color, items.length);
 			const body = sec.querySelector('.ztf-sb-group-body')!;
 			for (const t of items) body.append(this.buildRow(t, selectedID));
 			this.listEl.append(sec);
@@ -220,37 +234,41 @@ export class VerticalSidebarController {
 		this.selection?.updateControls();
 	}
 
-	private buildSection(title: string, color: string, count: number, collapsed: boolean, onToggle: () => void, onContext?: (e: MouseEvent) => void, dropGroupId?: string, onDblClick?: () => void): HTMLElement {
-		const wrap = this.h('div', `ztf-sb-group${collapsed ? ' collapsed' : ''}`);
+	private getGroupSection(id: string): GroupSection {
+		const cached = this.groupSections.get(id);
+		if (cached) return cached;
+		const section = new GroupSection(this.win, this.doc, {
+			section: 'ztf-sb-group',
+			heading: 'ztf-sb-group-head',
+			body: 'ztf-sb-group-body',
+		}, (closed) => this.store.setCollapsed(id, closed),
+		(name) => this.store.renameGroup(id, name));
+		section.heading.prepend(this.h('span', 'ztf-sb-dot'));
+		section.heading.ondragover = (e: Event) => { if (this.draggedKey) e.preventDefault(); };
+		section.heading.ondrop = (e: Event) => {
+			e.preventDefault();
+			if (!this.draggedKey) return;
+			this.store.assignKey(this.draggedKey, id);
+			this.draggedKey = null;
+			this.onRefresh();
+		};
+		this.groupSections.set(id, section);
+		return section;
+	}
+
+	private clearGroupSections(): void {
+		for (const section of this.groupSections.values()) section.dispose();
+		this.groupSections.clear();
+	}
+
+	private buildSection(title: string, color: string, count: number): HTMLElement {
+		const wrap = this.h('div', 'ztf-sb-group');
 		const head = this.h('div', 'ztf-sb-group-head');
 		const dot = this.h('span', 'ztf-sb-dot');
 		dot.style.background = color;
 		const txt = this.h('span');
-		txt.textContent = `${collapsed ? '▸' : '▾'} ${title} (${count})`;
+		txt.textContent = `${title} (${count})`;
 		head.append(dot, txt);
-		let clickTimer: number | null = null;
-		head.onclick = () => {
-			if (clickTimer !== null) this.win.clearTimeout(clickTimer);
-			clickTimer = this.win.setTimeout(() => { clickTimer = null; onToggle(); }, 210);
-		};
-		if (onDblClick) {
-			head.ondblclick = (e: Event) => {
-				e.stopPropagation();
-				if (clickTimer !== null) { this.win.clearTimeout(clickTimer); clickTimer = null; }
-				onDblClick();
-			};
-		}
-		if (onContext) head.oncontextmenu = (e: Event) => onContext(e as MouseEvent);
-		if (dropGroupId !== undefined) {
-			head.ondragover = (e: Event) => { if (this.draggedKey) e.preventDefault(); };
-			head.ondrop = (e: Event) => {
-				e.preventDefault();
-				if (!this.draggedKey) return;
-				this.store.assignKey(this.draggedKey, dropGroupId);
-				this.draggedKey = null;
-				this.onRefresh();
-			};
-		}
 		wrap.append(head, this.h('div', 'ztf-sb-group-body'));
 		return wrap;
 	}
@@ -307,33 +325,8 @@ export class VerticalSidebarController {
 		return row;
 	}
 
-	private beginSidebarRename(sec: HTMLElement, groupId: string, currentName: string): void {
-		const head = sec.querySelector('.ztf-sb-group-head');
-		if (!head) return;
-		const input = this.h('input', 'ztf-inline-edit');
-		input.type = 'text';
-		input.value = currentName;
-		let done = false;
-		const finish = (save: boolean) => {
-			if (done) return;
-			done = true;
-			const clean = input.value.trim();
-			if (save && clean) this.store.renameGroup(groupId, clean);
-			this.onRefresh();
-		};
-		input.onclick = (e: Event) => e.stopPropagation();
-		input.onkeydown = (e: Event) => {
-			const ke = e as KeyboardEvent;
-			if (ke.key === 'Enter') { ke.preventDefault(); finish(true); }
-			else if (ke.key === 'Escape') { ke.preventDefault(); finish(false); }
-		};
-		input.onblur = () => finish(true);
-		head.replaceWith(input);
-		input.focus();
-		input.select();
-	}
-
 	dispose(): void {
+		this.clearGroupSections();
 		this.hoverCard.dispose();
 		this.sidebar?.remove();
 		this.sidebar = null;

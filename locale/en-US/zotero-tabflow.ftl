@@ -107,3 +107,5 @@ zotero-tabflow-batch-pin = Pin
 zotero-tabflow-batch-unpin = Unpin
 zotero-tabflow-spotlight-search =
     .placeholder = Search open tabs, type >tabs to sort by recency, or type > for commands
+zotero-tabflow-rename-group-input =
+    .aria-label = Rename group

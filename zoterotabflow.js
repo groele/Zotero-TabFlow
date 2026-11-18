@@ -717,6 +717,145 @@
     }
   };
 
+  // src/ui/group-section.ts
+  var CLICK_DELAY_MS = 210;
+  var XHTML = "http://www.w3.org/1999/xhtml";
+  var GroupSection = class {
+    element;
+    heading;
+    body;
+    label;
+    win;
+    doc;
+    setCollapsed;
+    rename;
+    timer = null;
+    cancelEdit = null;
+    name = "";
+    collapsed = false;
+    beforeClick = null;
+    constructor(win, doc, classes, setCollapsed, rename) {
+      this.win = win;
+      this.doc = doc;
+      this.setCollapsed = setCollapsed;
+      this.rename = rename;
+      this.element = doc.createElementNS(XHTML, "div");
+      this.element.className = classes.section;
+      this.heading = doc.createElementNS(XHTML, "button");
+      this.heading.type = "button";
+      this.heading.className = classes.heading;
+      this.label = doc.createElementNS(XHTML, "span");
+      this.body = doc.createElementNS(XHTML, "div");
+      this.body.className = classes.body;
+      this.heading.append(this.label);
+      this.element.append(this.heading, this.body);
+      this.heading.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (event.button !== 0) return;
+        this.cancelPendingClick();
+        if (event.detail === 0) {
+          this.beforeClick = null;
+          this.applyCollapsed(!this.collapsed);
+        } else if (event.detail === 1) {
+          this.beforeClick = null;
+          this.timer = this.win.setTimeout(() => {
+            this.timer = null;
+            if (!this.heading.isConnected || this.heading.hidden) return;
+            this.beforeClick = this.collapsed;
+            this.applyCollapsed(!this.collapsed);
+          }, CLICK_DELAY_MS);
+        }
+      });
+      this.heading.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.button !== 0) return;
+        this.cancelPendingClick();
+        if (this.beforeClick !== null && this.collapsed !== this.beforeClick) {
+          this.applyCollapsed(this.beforeClick);
+        }
+        this.beforeClick = null;
+        this.edit();
+      });
+      this.heading.addEventListener("dragstart", () => this.resetClick());
+      this.heading.addEventListener("contextmenu", () => this.resetClick());
+    }
+    update(group, collapsed, count) {
+      this.name = group.name;
+      this.collapsed = collapsed;
+      const label = `${collapsed ? "▸" : "▾"} ${group.name} (${count})`;
+      if (this.label.textContent !== label) this.label.textContent = label;
+      this.heading.title = label;
+      this.heading.setAttribute("aria-expanded", String(!collapsed));
+      this.body.hidden = collapsed;
+    }
+    applyCollapsed(collapsed) {
+      this.collapsed = collapsed;
+      this.setCollapsed(collapsed);
+    }
+    edit() {
+      if (this.cancelEdit || !this.heading.isConnected) return;
+      const input = this.doc.createElementNS(XHTML, "input");
+      input.type = "text";
+      input.className = "ztf-inline-edit ztf-group-edit";
+      input.value = this.name;
+      input.setAttribute("data-l10n-id", "zotero-tabflow-rename-group-input");
+      const finish = (save, focus) => {
+        if (!this.cancelEdit) return;
+        this.cancelEdit = null;
+        input.remove();
+        this.heading.hidden = false;
+        const name = input.value.trim();
+        if (save && name && name !== this.name) this.rename(name);
+        if (focus) this.heading.focus({ preventScroll: true });
+      };
+      this.cancelEdit = () => finish(false, false);
+      input.addEventListener("keydown", (event) => {
+        event.stopPropagation();
+        if (event.isComposing || event.key !== "Enter" && event.key !== "Escape") return;
+        event.preventDefault();
+        finish(event.key === "Enter", true);
+      });
+      input.onblur = () => finish(true, false);
+      this.heading.hidden = true;
+      this.heading.after(input);
+      input.focus();
+      input.select();
+    }
+    cancelPendingClick() {
+      if (this.timer !== null) this.win.clearTimeout(this.timer);
+      this.timer = null;
+    }
+    resetClick() {
+      this.cancelPendingClick();
+      this.beforeClick = null;
+    }
+    pause() {
+      this.resetClick();
+      this.cancelEdit?.();
+    }
+    dispose() {
+      this.pause();
+      this.element.remove();
+    }
+  };
+  function reconcileGroupSections(container, cached, order, end = null) {
+    const visible = new Set(order);
+    for (const [id, section] of cached) {
+      if (visible.has(id)) continue;
+      section.dispose();
+      cached.delete(id);
+    }
+    let next = end;
+    for (let i = order.length - 1; i >= 0; i--) {
+      const section = cached.get(order[i]).element;
+      if (section.parentElement !== container || section.nextElementSibling !== next) {
+        container.insertBefore(section, next);
+      }
+      next = section;
+    }
+  }
+
   // src/ui/icons.ts
   var SVG_NS = "http://www.w3.org/2000/svg";
   var ICONS = {
@@ -810,7 +949,8 @@
     toolbarActions = null;
     drag;
     lastSelectedID = "";
-    headingClickTimer = null;
+    groupSections = /* @__PURE__ */ new Map();
+    addGroupButton = null;
     h(tag, className) {
       const el = this.doc.createElementNS("http://www.w3.org/1999/xhtml", tag);
       if (className) el.className = className;
@@ -862,14 +1002,16 @@
       const enabled = getPref("enableHorizontalGroups");
       const mounted = enabled && Boolean(this.root?.isConnected);
       host.toggleAttribute("data-ztf-inline", mounted);
+      if (!mounted) {
+        if (this.pinnedStrip) this.pinnedStrip.hidden = true;
+        for (const group of this.groupSections.values()) group.pause();
+      }
       if (this.root) this.root.hidden = !mounted;
-      if (!mounted && this.pinnedStrip) this.pinnedStrip.hidden = true;
       this.renderToolbarButtons();
-      if (!mounted || !this.root || this.root.querySelector(".ztf-inline-edit")) return;
+      if (!mounted || !this.root || this.root.querySelector(".ztf-inline-edit:not(.ztf-group-edit)")) return;
       const tracked = this.meta.buildTrackedTabs();
       const selectedID = this.meta.getSelectedTabID();
       const scroll = this.root.scrollLeft;
-      this.root.textContent = "";
       const pinnedTabs = getPref("enablePinnedTabs") ? tracked.filter((t) => t.pinned) : [];
       if (this.pinnedStrip) {
         const strip = this.pinnedStrip;
@@ -890,40 +1032,35 @@
         strip.scrollLeft = pinnedScroll;
       }
       const unpinned = tracked.filter((t) => !t.pinned);
-      for (const g of this.store.orderedGroups()) {
-        const section = this.h("div", "ztf-section");
-        section.style.setProperty("--ztf-color", g.color);
-        section.style.setProperty("--ztf-ink", contrastInk(g.color));
+      const groups = this.store.orderedGroups();
+      for (const g of groups) {
+        let section = this.groupSections.get(g.id);
+        if (!section) {
+          section = new GroupSection(
+            this.win,
+            this.doc,
+            {
+              section: "ztf-section",
+              heading: `ztf-heading${!g.id ? " ztf-ungrouped" : ""}`,
+              body: "ztf-section-body"
+            },
+            (closed) => this.store.setCollapsed(g.id, closed),
+            (name) => this.store.renameGroup(g.id, name)
+          );
+          section.heading.onmousedown = (event) => event.stopPropagation();
+          this.groupSections.set(g.id, section);
+        }
+        section.element.style.setProperty("--ztf-color", g.color);
+        section.element.style.setProperty("--ztf-ink", contrastInk(g.color));
         const collapsed = this.store.state.collapsed.includes(g.id);
         const members = unpinned.filter((t) => t.groupId === g.id);
         const virtuals = getPref("enableVirtualMembers") ? Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === g.id) : [];
-        const heading = this.h("button", `ztf-heading${!g.id ? " ztf-ungrouped" : ""}`);
-        heading.type = "button";
-        heading.textContent = `${collapsed ? "▸" : "▾"} ${g.name} (${members.length + virtuals.length})`;
-        heading.title = heading.textContent;
-        heading.setAttribute("aria-expanded", String(!collapsed));
-        heading.onmousedown = (e) => e.stopPropagation();
-        heading.onclick = (e) => {
-          e.stopPropagation();
-          if (this.headingClickTimer !== null) this.win.clearTimeout(this.headingClickTimer);
-          this.headingClickTimer = this.win.setTimeout(() => {
-            this.headingClickTimer = null;
-            this.store.setCollapsed(g.id, !collapsed);
-          }, 210);
-        };
-        heading.ondblclick = (e) => {
-          e.stopPropagation();
-          if (this.headingClickTimer !== null) {
-            this.win.clearTimeout(this.headingClickTimer);
-            this.headingClickTimer = null;
-          }
-          this.beginInlineEdit(heading, g.name, (next) => this.store.renameGroup(g.id, next));
-        };
-        heading.oncontextmenu = (e) => this.menus.openGroupMenu(e, g);
-        this.drag.bindGroupDrag(heading, g.id, collapsed);
-        section.append(heading);
+        section.update(g, collapsed, members.length + virtuals.length);
+        section.heading.oncontextmenu = (e) => this.menus.openGroupMenu(e, g);
+        this.drag.bindGroupDrag(section.heading, g.id, collapsed);
         if (!collapsed) {
-          for (const t of members) section.append(this.buildTabNode(t, selectedID));
+          const nodes = this.doc.createDocumentFragment();
+          for (const t of members) nodes.append(this.buildTabNode(t, selectedID));
           for (const v of virtuals) {
             const vNode = this.h("button", "ztf-doc ztf-virtual");
             vNode.type = "button";
@@ -933,19 +1070,21 @@
             vNode.title = `虚拟保留成员（点击重新加载）：${v.title}`;
             vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id).then(this.onRefresh);
             vNode.oncontextmenu = (e) => this.menus.openVirtualMenu(e, v, g.id);
-            section.append(vNode);
+            nodes.append(vNode);
           }
+          section.body.replaceChildren(nodes);
         }
-        this.root.append(section);
       }
-      const addBtn = this.h("button", "ztf-add-group");
-      addBtn.type = "button";
-      addBtn.append(createSvgIcon(this.doc, "plus", 13));
-      addBtn.title = "新建分组";
-      addBtn.onclick = () => {
-        this.beginInlineEdit(addBtn, "", (next) => this.store.ensureGroup(next), "新分组名称…");
-      };
-      this.root.append(addBtn);
+      if (!this.addGroupButton) {
+        const addBtn = this.h("button", "ztf-add-group");
+        addBtn.type = "button";
+        addBtn.append(createSvgIcon(this.doc, "plus", 13));
+        addBtn.title = "新建分组";
+        addBtn.onclick = () => this.beginInlineEdit(addBtn, "", (next) => this.store.ensureGroup(next), "新分组名称…");
+        this.root.append(addBtn);
+        this.addGroupButton = addBtn;
+      }
+      reconcileGroupSections(this.root, this.groupSections, groups.map((g) => g.id), this.addGroupButton);
       this.root.scrollLeft = scroll;
       if (selectedID && selectedID !== this.lastSelectedID) {
         this.lastSelectedID = selectedID;
@@ -1051,16 +1190,15 @@
       }
     }
     dispose() {
-      if (this.headingClickTimer !== null) {
-        this.win.clearTimeout(this.headingClickTimer);
-        this.headingClickTimer = null;
-      }
+      for (const group of this.groupSections.values()) group.dispose();
+      this.groupSections.clear();
       this.drag.clear();
       this.doc.getElementById("tab-bar-container")?.removeAttribute("data-ztf-inline");
       this.root?.remove();
       this.pinnedStrip?.remove();
       this.toolbarActions?.remove();
       this.root = null;
+      this.addGroupButton = null;
       this.pinnedStrip = null;
       this.toolbarActions = null;
     }
@@ -1944,7 +2082,7 @@
       return btn;
     }
     visibleCheckboxes() {
-      return [...this.list.querySelectorAll(".ztf-batch-check")];
+      return [...this.list.querySelectorAll(".ztf-batch-check")].filter((checkbox) => !checkbox.closest("[hidden]"));
     }
     beginRender(tracked) {
       const enabled = getPref("enableBatchSelection");
@@ -2025,6 +2163,7 @@
     hoverCard;
     viewMode = "groups";
     draggedKey = null;
+    groupSections = /* @__PURE__ */ new Map();
     h(tag, className) {
       const el = this.doc.createElementNS("http://www.w3.org/1999/xhtml", tag);
       if (className) el.className = className;
@@ -2127,9 +2266,14 @@
       if (!this.sidebar) return;
       const enabled = getPref("enableVerticalSidebar");
       const collapsed = getPref("verticalSidebarCollapsed");
+      if (!enabled || collapsed) {
+        for (const group of this.groupSections.values()) group.pause();
+      }
       this.sidebar.hidden = !enabled || collapsed;
       this.sidebar.classList.toggle("collapsed", collapsed);
-      if (!enabled || collapsed) return;
+      if (!enabled || collapsed) {
+        return;
+      }
       this.sidebar.style.setProperty("--ztf-sb-width", `${getPref("verticalSidebarWidth")}px`);
       this.sidebar.style.setProperty("--ztf-row-height", `${getPref("verticalTabRowHeight")}px`);
       this.sidebar.style.setProperty("--ztf-font-size", `${getPref("verticalTabFontSize")}px`);
@@ -2146,15 +2290,19 @@
         const r = this.store.getRemark(t.key).note;
         return `${t.title} ${t.shortTitle} ${t.filename} ${t.collection} ${r}`.toLowerCase().includes(q);
       });
-      this.listEl.textContent = "";
       if (this.viewMode === "groups") {
-        for (const g of this.store.orderedGroups()) {
+        if (!this.groupSections.size) this.listEl.replaceChildren();
+        const groups = this.store.orderedGroups();
+        for (const g of groups) {
           const members = allTracked.filter((t) => t.groupId === g.id);
           const virtuals = getPref("enableVirtualMembers") ? Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === g.id) : [];
           const collapsed = this.store.state.collapsed.includes(g.id);
-          const sec = this.buildSection(g.name, g.color, members.length + virtuals.length, collapsed, () => this.store.setCollapsed(g.id, !collapsed), (e) => this.menus.openGroupMenu(e, g), g.id, () => this.beginSidebarRename(sec, g.id, g.name));
+          const section = this.getGroupSection(g.id);
+          section.element.style.setProperty("--ztf-group-dot", g.color);
+          section.update(g, collapsed, members.length + virtuals.length);
+          section.heading.oncontextmenu = (e) => this.menus.openGroupMenu(e, g);
           if (!collapsed) {
-            const body = sec.querySelector(".ztf-sb-group-body");
+            const body = this.doc.createDocumentFragment();
             for (const t of members) body.append(this.buildRow(t, selectedID));
             for (const v of virtuals) {
               const row = this.h("div", "ztf-sb-row virtual");
@@ -2169,19 +2317,21 @@
               row.oncontextmenu = (e) => this.menus.openVirtualMenu(e, v, g.id);
               body.append(row);
             }
+            section.body.replaceChildren(body);
           }
-          this.listEl.append(sec);
         }
+        reconcileGroupSections(this.listEl, this.groupSections, groups.map((g) => g.id));
         this.selection?.updateControls();
         return;
       }
+      this.clearGroupSections();
+      this.listEl.replaceChildren();
       if (this.viewMode === "collection") {
         const cols = [...new Set(allTracked.map((t) => t.collection))];
         cols.forEach((col, i) => {
           const items = allTracked.filter((t) => t.collection === col);
           const colors = ["#3977d5", "#21866a", "#8b5ac7", "#dc8225"];
-          const sec = this.buildSection(col, colors[i % colors.length], items.length, false, () => {
-          });
+          const sec = this.buildSection(col, colors[i % colors.length], items.length);
           const body = sec.querySelector(".ztf-sb-group-body");
           for (const t of items) body.append(this.buildRow(t, selectedID));
           this.listEl.append(sec);
@@ -2193,53 +2343,53 @@
         ["已加载阅读器", "#16a34a", allTracked.filter((t) => t.status === "active")],
         ["已休眠省内存", "#d97706", allTracked.filter((t) => t.status === "sleeping")]
       ]) {
-        const sec = this.buildSection(label, color, items.length, false, () => {
-        });
+        const sec = this.buildSection(label, color, items.length);
         const body = sec.querySelector(".ztf-sb-group-body");
         for (const t of items) body.append(this.buildRow(t, selectedID));
         this.listEl.append(sec);
       }
       this.selection?.updateControls();
     }
-    buildSection(title, color, count, collapsed, onToggle, onContext, dropGroupId, onDblClick) {
-      const wrap = this.h("div", `ztf-sb-group${collapsed ? " collapsed" : ""}`);
+    getGroupSection(id) {
+      const cached = this.groupSections.get(id);
+      if (cached) return cached;
+      const section = new GroupSection(
+        this.win,
+        this.doc,
+        {
+          section: "ztf-sb-group",
+          heading: "ztf-sb-group-head",
+          body: "ztf-sb-group-body"
+        },
+        (closed) => this.store.setCollapsed(id, closed),
+        (name) => this.store.renameGroup(id, name)
+      );
+      section.heading.prepend(this.h("span", "ztf-sb-dot"));
+      section.heading.ondragover = (e) => {
+        if (this.draggedKey) e.preventDefault();
+      };
+      section.heading.ondrop = (e) => {
+        e.preventDefault();
+        if (!this.draggedKey) return;
+        this.store.assignKey(this.draggedKey, id);
+        this.draggedKey = null;
+        this.onRefresh();
+      };
+      this.groupSections.set(id, section);
+      return section;
+    }
+    clearGroupSections() {
+      for (const section of this.groupSections.values()) section.dispose();
+      this.groupSections.clear();
+    }
+    buildSection(title, color, count) {
+      const wrap = this.h("div", "ztf-sb-group");
       const head = this.h("div", "ztf-sb-group-head");
       const dot = this.h("span", "ztf-sb-dot");
       dot.style.background = color;
       const txt = this.h("span");
-      txt.textContent = `${collapsed ? "▸" : "▾"} ${title} (${count})`;
+      txt.textContent = `${title} (${count})`;
       head.append(dot, txt);
-      let clickTimer = null;
-      head.onclick = () => {
-        if (clickTimer !== null) this.win.clearTimeout(clickTimer);
-        clickTimer = this.win.setTimeout(() => {
-          clickTimer = null;
-          onToggle();
-        }, 210);
-      };
-      if (onDblClick) {
-        head.ondblclick = (e) => {
-          e.stopPropagation();
-          if (clickTimer !== null) {
-            this.win.clearTimeout(clickTimer);
-            clickTimer = null;
-          }
-          onDblClick();
-        };
-      }
-      if (onContext) head.oncontextmenu = (e) => onContext(e);
-      if (dropGroupId !== void 0) {
-        head.ondragover = (e) => {
-          if (this.draggedKey) e.preventDefault();
-        };
-        head.ondrop = (e) => {
-          e.preventDefault();
-          if (!this.draggedKey) return;
-          this.store.assignKey(this.draggedKey, dropGroupId);
-          this.draggedKey = null;
-          this.onRefresh();
-        };
-      }
       wrap.append(head, this.h("div", "ztf-sb-group-body"));
       return wrap;
     }
@@ -2296,37 +2446,8 @@
       };
       return row;
     }
-    beginSidebarRename(sec, groupId, currentName) {
-      const head = sec.querySelector(".ztf-sb-group-head");
-      if (!head) return;
-      const input = this.h("input", "ztf-inline-edit");
-      input.type = "text";
-      input.value = currentName;
-      let done = false;
-      const finish = (save) => {
-        if (done) return;
-        done = true;
-        const clean = input.value.trim();
-        if (save && clean) this.store.renameGroup(groupId, clean);
-        this.onRefresh();
-      };
-      input.onclick = (e) => e.stopPropagation();
-      input.onkeydown = (e) => {
-        const ke = e;
-        if (ke.key === "Enter") {
-          ke.preventDefault();
-          finish(true);
-        } else if (ke.key === "Escape") {
-          ke.preventDefault();
-          finish(false);
-        }
-      };
-      input.onblur = () => finish(true);
-      head.replaceWith(input);
-      input.focus();
-      input.select();
-    }
     dispose() {
+      this.clearGroupSections();
       this.hoverCard.dispose();
       this.sidebar?.remove();
       this.sidebar = null;
@@ -2405,6 +2526,9 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 #ztf-inline .ztf-section {
   position: relative; display: inline-flex; align-items: center; flex: none; height: var(--ztf-tab-height); gap: 4px; box-sizing: border-box;
 }
+#ztf-inline .ztf-section-body { display: contents; }
+#ztf-inline .ztf-heading[hidden], #ztf-inline .ztf-section-body[hidden],
+.ztf-sb-group-head[hidden], .ztf-sb-group-body[hidden] { display: none; }
 #ztf-inline .ztf-section::after {
   content: ""; position: absolute; left: 2px; right: 2px; bottom: -3px; height: 2px; border-radius: 1px;
   background: color-mix(in srgb, var(--ztf-color, transparent) 65%, transparent); pointer-events: none;
@@ -2513,10 +2637,13 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 .ztf-sb-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 6px 10px; display: flex; flex-direction: column; gap: 4px; }
 .ztf-sb-group-head {
   display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 5px;
-  font-size: 11px; font-weight: 600; color: var(--ztf-muted); cursor: pointer; user-select: none;
+  width: 100%; box-sizing: border-box; border: 0; background: transparent; text-align: start;
+  font: inherit; font-size: 11px; font-weight: 600; color: var(--ztf-muted); user-select: none;
 }
-.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-text); }
-.ztf-sb-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+button.ztf-sb-group-head { cursor: pointer; }
+button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-text); }
+.ztf-sb-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ztf-group-dot); }
+.ztf-sb-group > .ztf-group-edit { width: 100%; max-width: none; height: 24px; }
 .ztf-sb-group-body { display: flex; flex-direction: column; gap: 1px; padding-left: 2px; }
 
 .ztf-sb-row {

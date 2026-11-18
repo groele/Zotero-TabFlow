@@ -107,3 +107,5 @@ zotero-tabflow-batch-pin = 固定
 zotero-tabflow-batch-unpin = 取消固定
 zotero-tabflow-spotlight-search =
     .placeholder = 搜索已打开标签，输入 >tabs 按最近访问排序，或输入 > 查找命令
+zotero-tabflow-rename-group-input =
+    .aria-label = 重命名分组
