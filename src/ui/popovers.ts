@@ -5,6 +5,7 @@ import type { TabSessionSnapshot } from '../core/types.ts';
 import type { ActivityTrackerService } from '../services/activity-tracker.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import {
+	applyPublicationGroupSuggestions,
 	buildPublicationGroupSuggestions,
 	buildSessionRestorePlan,
 	executeSessionRestorePlan,
@@ -197,10 +198,7 @@ export class PopoverController {
 			return;
 		}
 		this.preview.openPublicationSuggestPreview(suggestions, (chosen) => {
-			for (const s of chosen) {
-				const group = s.existingGroupId ? { id: s.existingGroupId } : this.store.ensureGroup(s.venue);
-				this.store.assignKeys(s.keys, group.id);
-			}
+			applyPublicationGroupSuggestions(this.store, chosen);
 			this.onRefresh();
 		});
 	}

@@ -1,5 +1,5 @@
 import type { TabFlowStore } from '../core/store.ts';
-import type { TabSessionSnapshot, TrackedTab } from '../core/types.ts';
+import type { TabSessionSnapshot, TrackedTab, VirtualMemberMeta } from '../core/types.ts';
 
 export interface SessionRestoreItemRef {
 	fullKey: string;
@@ -15,6 +15,7 @@ export interface SessionRestorePlan {
 	alreadyOpenCount: number;
 	toOpen: SessionRestoreItemRef[];
 	missing: SessionRestoreItemRef[];
+	virtualMembers?: VirtualMemberMeta[];
 	reassignedCount: number;
 	pinAdded: string[];
 	pinRemoved: string[];
@@ -36,7 +37,7 @@ export interface PublicationGroupSuggestion {
 	existingGroupId?: string;
 }
 
-export type ItemKeyResolver = (libraryID: number, itemKey: string) => Promise<{ id: number; deleted?: boolean; getField?: (f: string) => string } | null>;
+export type ItemKeyResolver = (libraryID: number, itemKey: string) => Promise<{ id: number; parentItemID?: number | false | null; deleted?: boolean; getField?: (f: string) => string } | null>;
 
 const defaultResolver: ItemKeyResolver = async (libraryID, itemKey) => {
 	try {
@@ -48,10 +49,17 @@ const defaultResolver: ItemKeyResolver = async (libraryID, itemKey) => {
 };
 
 export function parseItemFullKey(fullKey: string): { libraryID: number; itemKey: string } | null {
-	const [libStr, itemKey] = fullKey.split(':');
+	if (typeof fullKey !== 'string') return null;
+	const [libStr, itemKey, extra] = fullKey.split(':');
 	const libraryID = Number(libStr);
-	if (!Number.isInteger(libraryID) || libraryID <= 0 || !itemKey) return null;
+	if (!Number.isInteger(libraryID) || libraryID <= 0 || !itemKey || extra !== undefined) return null;
 	return { libraryID, itemKey };
+}
+
+function sessionVirtualMembers(session: TabSessionSnapshot) {
+	return session.kind !== 'template' && Array.isArray(session.virtualMembers)
+		? session.virtualMembers.filter((member) => member && typeof member.key === 'string' && typeof member.title === 'string')
+		: [];
 }
 
 export async function buildSessionRestorePlan(
@@ -65,6 +73,13 @@ export async function buildSessionRestorePlan(
 	let alreadyOpenCount = 0;
 	const toOpen: SessionRestoreItemRef[] = [];
 	const missing: SessionRestoreItemRef[] = [];
+	const virtualMembers: VirtualMemberMeta[] | undefined =
+		Array.isArray(session.virtualMembers) || session.kind === 'template' ? [] : undefined;
+	const resolved = new Map<string, Awaited<ReturnType<ItemKeyResolver>>>();
+	const resolve = async (fullKey: string, ref: { libraryID: number; itemKey: string }) => {
+		if (!resolved.has(fullKey)) resolved.set(fullKey, await resolver(ref.libraryID, ref.itemKey));
+		return resolved.get(fullKey);
+	};
 
 	for (const fullKey of session.openKeys) {
 		if (openSet.has(fullKey)) {
@@ -76,11 +91,25 @@ export async function buildSessionRestorePlan(
 			missing.push({ fullKey, libraryID: 0, itemKey: fullKey });
 			continue;
 		}
-		const item = await resolver(parsed.libraryID, parsed.itemKey);
+		const item = await resolve(fullKey, parsed);
 		if (item && !item.deleted) {
 			toOpen.push({ fullKey, ...parsed, itemID: item.id, title: item.getField?.('title') || fullKey });
 		} else {
 			missing.push({ fullKey, ...parsed });
+		}
+	}
+	const missingKeys = new Set(missing.map((ref) => ref.fullKey));
+	const seenVirtualKeys = new Set<string>();
+	for (const member of sessionVirtualMembers(session)) {
+		const fullKey = member.key;
+		if (seenVirtualKeys.has(fullKey)) continue;
+		seenVirtualKeys.add(fullKey);
+		const ref = parseItemFullKey(fullKey);
+		const item = ref ? await resolve(fullKey, ref) : null;
+		if (item && !item.deleted) {
+			virtualMembers?.push({ ...member, itemID: item.id, parentItemID: item.parentItemID || null });
+		} else if (!missingKeys.has(fullKey)) {
+			missing.push({ fullKey, ...(ref ?? { libraryID: 0, itemKey: fullKey }), title: member.title });
 		}
 	}
 
@@ -114,6 +143,7 @@ export async function buildSessionRestorePlan(
 		alreadyOpenCount,
 		toOpen,
 		missing,
+		virtualMembers,
 		reassignedCount,
 		pinAdded,
 		pinRemoved,
@@ -129,10 +159,11 @@ export async function executeSessionRestorePlan(
 	openKeysNow: readonly string[],
 	isDisposed: () => boolean = () => false,
 ): Promise<void> {
+	if (isDisposed()) return;
 	if (!plan.merge && plan.session.kind !== 'pre-replace') {
 		store.savePreReplaceSnapshot([...openKeysNow]);
 	}
-	store.restoreSessionLayout(plan.session, plan.merge);
+	store.restoreSessionLayout(plan.session, plan.merge, plan.virtualMembers);
 	for (const ref of plan.toOpen) {
 		if (isDisposed() || !ref.itemID) return;
 		try {
@@ -144,6 +175,8 @@ export async function executeSessionRestorePlan(
 }
 
 export function buildPublicationGroupSuggestions(store: TabFlowStore, tracked: readonly TrackedTab[]): PublicationGroupSuggestion[] {
+	const visibleGroups = new Map(store.visibleGroups().filter((g) => g.id).map((g) => [g.name, g.id]));
+	const hiddenNames = new Set(store.hiddenGroups().map((g) => g.name));
 	const buckets = new Map<string, { keys: string[]; titles: string[] }>();
 	for (const t of tracked) {
 		if (t.groupId || t.pinned || !t.source.trim()) continue;
@@ -156,14 +189,25 @@ export function buildPublicationGroupSuggestions(store: TabFlowStore, tracked: r
 		buckets.set(venue, bucket);
 	}
 	return [...buckets.entries()]
-		.filter(([venue, b]) => b.keys.length >= 2 || store.state.groups.some((g) => g.name === venue))
+		.filter(([venue, b]) => visibleGroups.has(venue) || (!hiddenNames.has(venue) && b.keys.length >= 2))
 		.map(([venue, b]) => ({
 			venue,
 			keys: b.keys,
 			titles: b.titles,
-			existingGroupId: store.state.groups.find((g) => g.name === venue)?.id,
+			existingGroupId: visibleGroups.get(venue),
 		}))
 		.sort((a, b) => b.keys.length - a.keys.length);
+}
+
+export function applyPublicationGroupSuggestions(store: TabFlowStore, chosen: readonly PublicationGroupSuggestion[]): void {
+	for (const suggestion of chosen) {
+		const visible = store.visibleGroups().find((group) => group.id && group.name === suggestion.venue);
+		if (!visible && store.hiddenGroups().some((group) => group.name === suggestion.venue)) continue;
+		const keys = suggestion.keys.filter((key) => !store.groupOfKey(key));
+		if (!keys.length) continue;
+		const group = visible ?? store.ensureGroup(suggestion.venue);
+		store.assignKeys(keys, group.id);
+	}
 }
 
 export function exportSessionsJson(sessions: readonly TabSessionSnapshot[], pluginVersion: string): string {
@@ -192,7 +236,7 @@ export async function parseAndPreviewSessionImport(
 	let resolvableCount = 0;
 
 	for (const s of sessions) {
-		for (const fullKey of s.openKeys) {
+		for (const fullKey of [...s.openKeys, ...sessionVirtualMembers(s).map((member) => member.key)]) {
 			if (checked.has(fullKey)) continue;
 			checked.add(fullKey);
 			const ref = parseItemFullKey(fullKey);

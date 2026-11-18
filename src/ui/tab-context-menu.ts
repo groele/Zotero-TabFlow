@@ -133,10 +133,12 @@ export class TabContextMenuController {
 					this.onRefresh();
 				}
 			});
+			const virtualMembers = Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === group.id);
 			if (!group.id) {
-				const ungrouped = this.meta.buildTrackedTabs().filter((x) => !x.groupId && !x.pinned);
-				if (getPref('enableGroupHiding') && this.store.state.ungroupedName) {
-					this.item(popup, t('zotero-tabflow-hide-named-ungrouped', '保存为独立分组并隐藏'), () => this.actions.hideGroup(''));
+				const ungroupedTabs = this.meta.buildTrackedTabs().filter((tab) => !tab.groupId);
+				const ungrouped = ungroupedTabs.filter((tab) => !tab.pinned);
+				if (getPref('enableGroupHiding') && (ungroupedTabs.length || virtualMembers.length)) {
+					this.item(popup, t('zotero-tabflow-hide-ungrouped', '隐藏当前未分组文献'), () => this.actions.hideGroup(''));
 				}
 				this.item(popup, t('zotero-tabflow-menu-convert-ungrouped', `将未分组文献转为新分组… (${ungrouped.length})`, { count: ungrouped.length }), () => {
 					const val = { value: '' };
@@ -173,7 +175,6 @@ export class TabContextMenuController {
 				}
 			});
 			popup.append(this.xul('menuseparator'));
-			const virtualMembers = Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === group.id);
 			if (virtualMembers.length) {
 				this.item(popup, `▶ ${t('zotero-tabflow-menu-open-virtual-all', `打开组内全部虚拟文献 (${virtualMembers.length})`, { count: virtualMembers.length })}`, () => {
 					void (async () => {

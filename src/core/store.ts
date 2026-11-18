@@ -128,9 +128,9 @@ export class TabFlowStore {
 		this.save();
 	}
 
-	hideNamedUngrouped(openKeys: readonly string[], members: readonly VirtualMemberMeta[] = []): void {
-		const originalName = this.state.ungroupedName;
-		if (!originalName || this.readOnly) return;
+	hideUngrouped(openKeys: readonly string[], members: readonly VirtualMemberMeta[] = []): void {
+		if (this.readOnly) return;
+		const originalName = this.state.ungroupedName || t('zotero-tabflow-saved-ungrouped-name', '未分组文献');
 		const keys = [...new Set([...openKeys, ...Object.keys(this.state.virtualMembers)])].filter((key) => !this.groupOfKey(key));
 		if (!keys.length) return;
 		let name = originalName;
@@ -353,8 +353,8 @@ export class TabFlowStore {
 		this.save();
 	}
 
-	restoreSessionLayout(snapshot: TabSessionSnapshot, merge: boolean): void {
-		applySessionLayout(this.state, snapshot, merge);
+	restoreSessionLayout(snapshot: TabSessionSnapshot, merge: boolean, virtualMembers?: readonly VirtualMemberMeta[]): void {
+		applySessionLayout(this.state, snapshot, merge, virtualMembers);
 		this.save();
 	}
 }

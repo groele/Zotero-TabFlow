@@ -4,6 +4,7 @@ import type {
 	TabFlowState,
 	TabRemark,
 	TabSessionSnapshot,
+	VirtualMemberMeta,
 } from './types.ts';
 
 const MAX_MANUAL_SESSIONS = 30;
@@ -18,6 +19,8 @@ export function buildSessionSnapshot(
 	const cleanKeys = kind === 'template' ? [] : [...new Set(openKeys)];
 	const assignments = kind === 'template' ? {} : { ...state.assignments };
 	const pinned = kind === 'template' ? [] : [...state.pinned];
+	const virtualMembers = kind === 'template' ? [] : Object.values(state.virtualMembers)
+		.map(({ itemID, parentItemID, ...portable }) => portable);
 	const relevantKeys = new Set([...cleanKeys, ...Object.keys(assignments), ...pinned]);
 	const remarks: Record<string, TabRemark> = {};
 	if (kind !== 'template') {
@@ -34,6 +37,7 @@ export function buildSessionSnapshot(
 		assignments,
 		pinned,
 		openKeys: cleanKeys,
+		virtualMembers,
 		order: [...state.order],
 		collapsed: [...state.collapsed],
 		remarks,
@@ -49,6 +53,7 @@ export function sessionLayoutFingerprint(snap: TabSessionSnapshot): string {
 		assignments: snap.assignments,
 		pinned: snap.pinned,
 		openKeys: snap.openKeys,
+		virtualMembers: snap.virtualMembers,
 		order: snap.order,
 		ungroupedName: snap.ungroupedName,
 		ungroupedColor: snap.ungroupedColor,
@@ -68,7 +73,10 @@ export function appendRollingSnapshot(state: TabFlowState, snap: TabSessionSnaps
 	return true;
 }
 
-export function applySessionLayout(state: TabFlowState, snapshot: TabSessionSnapshot, merge: boolean): void {
+export function applySessionLayout(
+	state: TabFlowState, snapshot: TabSessionSnapshot, merge: boolean, virtualMembers?: readonly VirtualMemberMeta[],
+): void {
+	const previousAssignments = state.assignments;
 	const existing = new Set(state.groups.map((g) => g.id));
 	const added = snapshot.groups.filter((g) => !merge || !existing.has(g.id));
 	state.groups = [...(merge ? state.groups : []), ...added.map((g) => ({ ...g }))];
@@ -84,8 +92,8 @@ export function applySessionLayout(state: TabFlowState, snapshot: TabSessionSnap
 		])];
 	} else {
 		state.collapsed = (snapshot.collapsed ?? []).filter((id) => validIds.has(id));
-		if (snapshot.ungroupedName) state.ungroupedName = snapshot.ungroupedName;
-		if (snapshot.ungroupedColor) state.ungroupedColor = snapshot.ungroupedColor;
+		state.ungroupedName = snapshot.ungroupedName;
+		state.ungroupedColor = snapshot.ungroupedColor ?? '#737373';
 	}
 
 	if (!merge) state.assignments = {};
@@ -101,6 +109,14 @@ export function applySessionLayout(state: TabFlowState, snapshot: TabSessionSnap
 		}
 	}
 	state.pinned = [...new Set([...(merge ? state.pinned : []), ...snapshot.pinned])];
+	if (!merge) {
+		state.virtualMembers = Object.fromEntries(Object.entries(state.virtualMembers).filter(([key]) =>
+			virtualMembers === undefined && (previousAssignments[key] || '') === (state.assignments[key] || ''),
+		));
+	}
+	for (const member of virtualMembers ?? []) {
+		if (!merge || !Object.hasOwn(state.virtualMembers, member.key)) state.virtualMembers[member.key] = member;
+	}
 }
 
 export function formatSnapshotTimestamp(ts: number): string {

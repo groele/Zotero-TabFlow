@@ -77,6 +77,7 @@ export class SessionPreviewController {
 				stats.replaceChildren(
 					this.statRow(t('zotero-tabflow-preview-already-open', '已打开（保留）'), String(plan.alreadyOpenCount)),
 					this.statRow(t('zotero-tabflow-preview-to-open', '将后台补开'), String(plan.toOpen.length)),
+					this.statRow(t('zotero-tabflow-preview-virtual-members', '保留的虚拟文献'), String(plan.virtualMembers?.length ?? 0)),
 					this.statRow(t('zotero-tabflow-preview-new-groups', '将新增分组'), String(plan.newGroupsCount)),
 					this.statRow(t('zotero-tabflow-preview-reassigned', '将调整分组'), String(plan.reassignedCount)),
 					this.statRow(t('zotero-tabflow-preview-pins', '固定状态变化'), `+${plan.pinAdded.length} / -${plan.pinRemoved.length}`),

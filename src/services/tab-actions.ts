@@ -69,7 +69,7 @@ export class TabActionService {
 		const tabs = this.meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId);
 		const members = tabs.map(toVirtualMember).filter((member) => member !== null);
 		if (groupId) this.store.setGroupHidden(groupId, true, members);
-		else this.store.hideNamedUngrouped(tabs.map((tab) => tab.key), members);
+		else this.store.hideUngrouped(tabs.map((tab) => tab.key), members);
 	}
 
 	undoCloseTab(): boolean {
@@ -116,17 +116,22 @@ export class TabActionService {
 	}
 
 	async openVirtualOrItem(itemID: number, groupId?: string, openInBackground = false): Promise<void> {
-		const item: any = Zotero.Items.get(itemID);
-		if (!item) return;
-		const key = `${item.libraryID}:${item.key}`;
-		if (groupId) this.store.assignKey(key, groupId);
-		this.store.removeVirtualMember(key);
-		if (item.isAttachment?.()) {
-			await Zotero.Reader.open(item.id, undefined, { openInBackground });
-			return;
+		try {
+			const item = Zotero.Items.get(itemID);
+			if (!item || item.deleted) return;
+			const attachment = item.isAttachment() ? item : await item.getBestAttachment();
+			if (!attachment || attachment.deleted) return;
+			if (attachment.isFileAttachment() && !await attachment.fileExists()) return;
+			const key = `${attachment.libraryID}:${attachment.key}`;
+			const virtual = this.store.state.virtualMembers[key];
+			await Zotero.Reader.open(attachment.id, undefined, { openInBackground });
+			if (groupId) this.store.assignKey(key, groupId);
+			const currentGroup = this.store.groupOfKey(key);
+			const hidden = this.store.state.groups.some((group) => group.id === currentGroup && group.hidden === true);
+			if (!hidden && virtual && this.store.state.virtualMembers[key] === virtual) this.store.removeVirtualMember(key);
+		} catch (error) {
+			Zotero.logError(error as Error);
 		}
-		const attachment = await item.getBestAttachment?.();
-		if (attachment) await Zotero.Reader.open(attachment.id, undefined, { openInBackground });
 	}
 
 	autoGroupByCollection(onlyTabIDs?: string[]): number {

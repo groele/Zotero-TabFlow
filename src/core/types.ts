@@ -42,6 +42,8 @@ export interface VirtualMemberMeta {
 	type: string;
 }
 
+export type SessionVirtualMember = Omit<VirtualMemberMeta, 'itemID' | 'parentItemID'>;
+
 export interface TabSessionSnapshot {
 	id: string;
 	name: string;
@@ -50,6 +52,7 @@ export interface TabSessionSnapshot {
 	assignments: Record<string, string>;
 	pinned: string[];
 	openKeys: string[];
+	virtualMembers?: SessionVirtualMember[];
 	order?: string[];
 	collapsed?: string[];
 	remarks?: Record<string, TabRemark>;

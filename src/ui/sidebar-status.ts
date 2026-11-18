@@ -19,7 +19,10 @@ export function computeWorkspaceStatusCounts(
 ): WorkspaceStatusCounts {
 	const active = tracked.filter((item) => item.status === 'active').length;
 	const sleeping = tracked.filter((item) => item.status === 'sleeping').length;
-	const virtual = getPref('enableVirtualMembers') ? Object.keys(store.state.virtualMembers).length : 0;
+	const openKeys = new Set(tracked.map((item) => item.key));
+	const virtual = getPref('enableVirtualMembers')
+		? Object.keys(store.state.virtualMembers).filter((key) => !openKeys.has(key)).length
+		: 0;
 	const budget = Math.max(0, Number(getPref('activeReaderBudget')) || 0);
 	return {
 		active,

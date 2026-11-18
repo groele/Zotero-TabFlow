@@ -84,12 +84,11 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
   display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis;
   height: var(--ztf-tab-height); box-sizing: border-box;
   border: 0; border-radius: 6px; padding: 0 10px;
-  background: var(--ztf-color, #64748b); color: var(--ztf-ink, #fff);
+  background: transparent; color: var(--ztf-text);
   font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap;
 }
-#ztf-inline .ztf-heading.ztf-ungrouped {
-  background: var(--ztf-hover); color: var(--ztf-text); border: 0;
-}
+#ztf-inline .ztf-heading:hover { background: var(--ztf-hover); }
+#ztf-inline .ztf-heading:focus-visible { outline: 1px solid var(--ztf-text); outline-offset: -2px; }
 #ztf-inline .ztf-doc {
   display: inline-flex; align-items: center; gap: 4px; max-width: 185px; height: var(--ztf-tab-height); box-sizing: border-box;
   padding-inline: 10px 6px; border: 0; border-radius: 6px;

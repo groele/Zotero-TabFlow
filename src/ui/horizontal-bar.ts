@@ -1,4 +1,3 @@
-import { contrastInk } from '../core/color-utils.ts';
 import { t } from '../core/i18n.ts';
 import { getPref, setPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
@@ -134,7 +133,7 @@ export class HorizontalBarController {
 			if (!section) {
 				section = new GroupSection(this.win, this.doc, {
 					section: 'ztf-section',
-					heading: `ztf-heading${!g.id ? ' ztf-ungrouped' : ''}`,
+					heading: 'ztf-heading',
 					body: 'ztf-section-body',
 				}, (closed) => this.store.setCollapsed(g.id, closed),
 				(name) => this.store.renameGroup(g.id, name));
@@ -142,7 +141,6 @@ export class HorizontalBarController {
 				this.groupSections.set(g.id, section);
 			}
 			section.element.style.setProperty('--ztf-color', g.color);
-			section.element.style.setProperty('--ztf-ink', contrastInk(g.color));
 			const collapsed = this.store.state.collapsed.includes(g.id);
 			const members = unpinned.filter((t) => t.groupId === g.id);
 			const virtuals = virtualMembers.filter((member) => this.store.groupOfKey(member.key) === g.id);
