@@ -54,4 +54,18 @@ export class ActivityTrackerService {
 			.filter((x) => x.days >= threshold)
 			.sort((a, b) => b.days - a.days);
 	}
+
+	getIdleTabsForSleep(now = Date.now()): TrackedTab[] {
+		if (!getPref('enableTabSleep')) return [];
+		const mins = Math.max(0, Number(getPref('autoSleepMinutes')) || 0);
+		if (mins <= 0) return [];
+		const thresholdMs = mins * 60_000;
+		const selected = this.meta.getSelectedTabID();
+		return this.meta.buildTrackedTabs().filter((t) => {
+			if (t.pinned || t.tab.id === selected || t.status !== 'active') return false;
+			const h = this.store.state.history[t.key];
+			const since = h?.lastViewed ?? h?.firstSeen ?? now;
+			return now - since >= thresholdMs;
+		});
+	}
 }

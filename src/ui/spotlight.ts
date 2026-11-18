@@ -1,7 +1,9 @@
-import { getPref } from '../core/prefs.ts';
+import { t } from '../core/i18n.ts';
+import { getPref, setPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
+import type { PopoverController } from './popovers.ts';
 
 interface SpotEntry { label: string; hint: string; run: () => void; }
 
@@ -18,6 +20,7 @@ export class SpotlightController {
 		private readonly store: TabFlowStore,
 		private readonly meta: ItemMetadataService,
 		private readonly actions: TabActionService,
+		private readonly popovers: PopoverController,
 		private readonly onRefresh: () => void,
 	) {}
 
@@ -56,7 +59,7 @@ export class SpotlightController {
 			if (e.key === 'Escape') { e.preventDefault(); this.close(); }
 			else if (e.key === 'ArrowDown') { e.preventDefault(); this.activeIndex = Math.max(0, Math.min(this.entries.length - 1, this.activeIndex + 1)); this.highlightActive(); }
 			else if (e.key === 'ArrowUp') { e.preventDefault(); this.activeIndex = Math.max(0, this.activeIndex - 1); this.highlightActive(); }
-			else if (e.key === 'Enter') { e.preventDefault(); const t = this.entries[this.activeIndex]; if (t) { t.run(); this.close(); } }
+			else if (e.key === 'Enter') { e.preventDefault(); const item = this.entries[this.activeIndex]; if (item) { item.run(); this.close(); } }
 		});
 		this.win.addEventListener('keydown', this.handleGlobalShortcut, true);
 	}
@@ -95,23 +98,62 @@ export class SpotlightController {
 		}
 
 		const tabEntries: SpotEntry[] = q.startsWith('>') && !tabsMode ? [] : tabs
-			.filter((t) => {
-				const r = this.store.getRemark(t.key).note;
-				const searchable = `${r} ${t.title} ${t.shortTitle} ${t.filename} ${t.collection} ${t.creatorYear} ${names.get(t.groupId) ?? ''}`.toLowerCase();
+			.filter((tab) => {
+				const r = this.store.getRemark(tab.key).note;
+				const searchable = `${r} ${tab.title} ${tab.shortTitle} ${tab.filename} ${tab.collection} ${tab.creatorYear} ${names.get(tab.groupId) ?? ''}`.toLowerCase();
 				return terms.every((term) => searchable.includes(term));
 			})
-			.map((t) => {
-				const gName = names.get(t.groupId) || '未分组';
-				const r = this.store.getRemark(t.key).note;
-				return { label: `${t.pinned ? '📌 ' : ''}${r || t.title}`, hint: `${gName} · ${t.collection}`, run: () => this.actions.selectTab(t.tab.id) };
+			.map((tab) => {
+				const gName = names.get(tab.groupId) || t('zotero-tabflow-ungrouped', '未分组');
+				const r = this.store.getRemark(tab.key).note;
+				return { label: `${tab.pinned ? '📌 ' : ''}${r || tab.title}`, hint: `${gName} · ${tab.collection}`, run: () => this.actions.selectTab(tab.tab.id) };
 			});
 
+		const selectedID = this.meta.getSelectedTabID();
+		const activeTab = tabs.find((tab) => tab.tab.id === selectedID);
+		const sessionEntries: SpotEntry[] = !getPref('enableSessions') ? [] : [...this.store.state.sessions, ...(this.store.state.rollingSessions ?? [])]
+			.map((s) => ({
+				label: `💾 ${t('zotero-tabflow-spot-session-prefix', '会话')}：${s.name} (${s.openKeys.length})`,
+				hint: t('zotero-tabflow-spot-session-hint', '预览并恢复'),
+				run: () => void this.popovers.previewAndRestoreSession(s),
+			}))
+			.filter((e) => !terms.length || terms.every((term) => `${e.label} ${e.hint}`.toLowerCase().includes(term)));
+
 		const cmdEntries: SpotEntry[] = [
-			{ label: '📂 按 Zotero 集合自动分组', hint: 'Auto-Group', run: () => { this.actions.autoGroupByCollection(); this.onRefresh(); } },
-			{ label: '💤 休眠所有后台非固定标签', hint: 'Memory Saver', run: () => { this.actions.sleepInactiveTabs(); this.onRefresh(); } },
+			{ label: `↩ ${t('zotero-tabflow-menu-undo-close', '恢复最近关闭的标签页')}`, hint: 'Ctrl+Shift+T', run: () => { this.actions.undoCloseTab(); this.onRefresh(); } },
+			{ label: `📂 ${t('zotero-tabflow-spot-cmd-autogroup', '按 Zotero 集合自动分组')}`, hint: 'Auto-Group', run: () => { this.actions.autoGroupByCollection(); this.onRefresh(); } },
+			{ label: `🗂️ ${t('zotero-tabflow-menu-suggest-venue', '按期刊自动归组建议…')}`, hint: 'Suggest', run: () => this.popovers.openPublicationSuggest() },
+			{ label: `💤 ${t('zotero-tabflow-spot-cmd-sleep', '休眠所有后台非固定标签')}`, hint: 'Memory Saver', run: () => { this.actions.sleepInactiveTabs(); this.onRefresh(); } },
+			...(getPref('enableSessions') ? [{
+				label: `💾 ${t('zotero-tabflow-spot-cmd-save-session', '保存当前工作区为会话…')}`,
+				hint: 'Session',
+				run: () => {
+					const val = { value: '' };
+					if (!Services.prompt.prompt(this.win, t('zotero-tabflow-sessions-save', '保存会话快照'), t('zotero-tabflow-sessions-save-prompt', '请输入会话名称：'), val, null, {})) return;
+					this.store.saveSession(val.value, tabs.map((item) => item.key));
+					this.onRefresh();
+				},
+			}] : []),
+			...(getPref('enableVerticalSidebar') ? [{
+				label: `⇄ ${t('zotero-tabflow-spot-cmd-toggle-sidebar', '展开/收起垂直标签侧边栏')}`,
+				hint: 'Sidebar',
+				run: () => { setPref('verticalSidebarCollapsed', !getPref('verticalSidebarCollapsed')); this.onRefresh(); },
+			}] : []),
+			...(activeTab ? [
+				...(getPref('enablePinnedTabs') ? [{
+					label: `📌 ${t('zotero-tabflow-spot-cmd-toggle-pin', '固定 / 取消固定当前标签')}`,
+					hint: 'Pin',
+					run: () => { this.store.togglePinned(activeTab.key); this.onRefresh(); },
+				}] : []),
+				{
+					label: `📂 ${t('zotero-tabflow-spot-cmd-pdf-folder', '打开当前 PDF 附件所在文件夹')}`,
+					hint: 'Folder',
+					run: () => void this.actions.showInFilesystem(activeTab.tab.id),
+				},
+			] : []),
 		].filter((c) => !terms.length || terms.every((term) => `${c.label} ${c.hint}`.toLowerCase().includes(term)));
 
-		this.entries = tabsMode ? tabEntries : [...tabEntries, ...cmdEntries];
+		this.entries = tabsMode ? tabEntries : [...tabEntries, ...sessionEntries, ...cmdEntries];
 		this.resultsEl.textContent = '';
 		this.entries.forEach((entry, idx) => {
 			const btn = this.h('button', `ztf-spot-row${idx === this.activeIndex ? ' active' : ''}`);
@@ -126,7 +168,7 @@ export class SpotlightController {
 		});
 		if (!this.entries.length) {
 			const empty = this.h('div', 'ztf-spot-empty');
-			empty.textContent = '没有匹配的文献或命令';
+			empty.textContent = t('zotero-tabflow-spot-empty', '没有匹配的文献或命令');
 			this.resultsEl.append(empty);
 		}
 	}

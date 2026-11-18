@@ -1,13 +1,39 @@
 /* Zotero TabFlow - Preferences controller. */
 "use strict";
 (() => {
+  // src/core/i18n.ts
+  var syncBundle = null;
+  function getBundle() {
+    if (syncBundle) return syncBundle;
+    const L10n = globalThis.Localization;
+    if (typeof L10n === "function") {
+      try {
+        syncBundle = new L10n(["zotero-tabflow.ftl"], true);
+      } catch {
+        syncBundle = null;
+      }
+    }
+    return syncBundle;
+  }
+  function t(id, fallback, args) {
+    try {
+      const val = getBundle()?.formatValueSync?.(id, args);
+      if (typeof val === "string" && val.trim()) return val;
+    } catch {
+    }
+    if (!args) return fallback;
+    return fallback.replace(/\{\s*\$([a-zA-Z0-9_]+)\s*\}/g, (_m, k) => String(args[k] ?? ""));
+  }
+
   // src/core/prefs.ts
   var PREF_PREFIX = "extensions.zotero.tabflow.";
   var DEFAULT_PREFS = {
     enableHorizontalGroups: true,
+    compactTopBar: false,
     enableVerticalSidebar: true,
     enableBatchSelection: true,
     enablePinnedTabs: true,
+    pinnedIconOnly: false,
     enableVirtualMembers: true,
     enableCollectionAutoGroup: false,
     multiCollectionStrategy: "active",
@@ -22,7 +48,10 @@
     enableHoverPreview: true,
     enableSpotlight: true,
     enableSessions: true,
+    enableRollingSnapshots: true,
     enableTabSleep: true,
+    autoSleepMinutes: 0,
+    activeReaderBudget: 0,
     enableStaleSuggestions: true,
     staleSuggestDays: 7,
     enableTabContextMenu: true,
@@ -54,9 +83,13 @@
     });
   }
   function updateDependencies(doc) {
+    setSubtreeDisabled(doc.getElementById("tabflow-sub-compactTopBar"), !getPref("enableHorizontalGroups") || !getPref("enableVerticalSidebar"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-enableBatchSelection"), !getPref("enableVerticalSidebar"));
+    setSubtreeDisabled(doc.getElementById("tabflow-sub-pinnedIconOnly"), !getPref("enablePinnedTabs"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-multiCollectionStrategy"), !getPref("enableCollectionAutoGroup"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-remarkDisplayMode"), !getPref("enableTabRemarks"));
+    setSubtreeDisabled(doc.getElementById("tabflow-sub-enableRollingSnapshots"), !getPref("enableSessions"));
+    setSubtreeDisabled(doc.getElementById("tabflow-sub-autoSleepMinutes"), !getPref("enableTabSleep"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-staleSuggestDays"), !getPref("enableStaleSuggestions"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-tabContextActions"), !getPref("enableTabContextMenu"));
   }
@@ -73,13 +106,13 @@
         updateDependencies(doc);
       });
       doc.getElementById("tabflow-clear-state-btn")?.addEventListener("command", () => {
-        if (Services.prompt.confirm(win || window, "清除工作区数据", "确认清除所有分组、备注、固定标签、会话快照与访问记录？")) {
+        if (Services.prompt.confirm(win || window, t("zotero-tabflow-clear-state-heading", "清除工作区数据"), t("zotero-tabflow-clear-state-confirm", "确认清除所有分组、备注、固定标签、会话快照与访问记录？"))) {
           Zotero.Prefs.set(`${PREF_PREFIX}state`, "", true);
           Zotero.zoterotabflow?.reloadState?.();
         }
       });
       if (!this.observerIDs.length) {
-        this.observerIDs = ["enableVerticalSidebar", "enableCollectionAutoGroup", "enableTabRemarks", "enableStaleSuggestions", "enableTabContextMenu"].map((key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => updateDependencies(doc), true));
+        this.observerIDs = ["enableHorizontalGroups", "enableVerticalSidebar", "enablePinnedTabs", "enableCollectionAutoGroup", "enableTabRemarks", "enableSessions", "enableTabSleep", "enableStaleSuggestions", "enableTabContextMenu"].map((key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => updateDependencies(doc), true));
         (win || window).addEventListener("unload", () => {
           for (const id of this.observerIDs) Zotero.Prefs.unregisterObserver(id);
           this.observerIDs = [];

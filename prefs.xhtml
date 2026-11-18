@@ -7,7 +7,7 @@
     <html:header class="tabflow-settings-header">
         <html:div class="tabflow-settings-title-row">
             <html:h1 data-l10n-id="zotero-tabflow-settings-heading"></html:h1>
-            <html:span id="tabflow-version-badge" data-l10n-id="zotero-tabflow-version-badge" data-l10n-args='{"version":"17.1.1"}' class="tabflow-version-badge"></html:span>
+            <html:span id="tabflow-version-badge" data-l10n-id="zotero-tabflow-version-badge" data-l10n-args='{"version":"17.2.0"}' class="tabflow-version-badge"></html:span>
         </html:div>
         <html:p data-l10n-id="zotero-tabflow-settings-intro"></html:p>
     </html:header>
@@ -23,19 +23,27 @@
             <html:div class="tabflow-subgroup">
                 <checkbox id="tabflow-pref-enableHorizontalGroups" preference="extensions.zotero.tabflow.enableHorizontalGroups" native="true" data-l10n-id="zotero-tabflow-pref-enable-horizontal-groups"/>
                 <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-horizontal-groups-desc"></description>
+                <html:div id="tabflow-sub-compactTopBar" class="tabflow-subordinate-stack">
+                    <checkbox id="tabflow-pref-compactTopBar" preference="extensions.zotero.tabflow.compactTopBar" native="true" data-l10n-id="zotero-tabflow-pref-compact-topbar"/>
+                    <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-compact-topbar-desc"></description>
+                </html:div>
             </html:div>
 
             <html:div class="tabflow-subgroup">
                 <checkbox id="tabflow-pref-enableVerticalSidebar" preference="extensions.zotero.tabflow.enableVerticalSidebar" native="true" data-l10n-id="zotero-tabflow-pref-enable-vertical-sidebar"/>
                 <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-vertical-sidebar-desc"></description>
-                <hbox id="tabflow-sub-enableBatchSelection" class="tabflow-subordinate-row">
+                <html:div id="tabflow-sub-enableBatchSelection" class="tabflow-subordinate-stack">
                     <checkbox id="tabflow-pref-enableBatchSelection" preference="extensions.zotero.tabflow.enableBatchSelection" native="true" data-l10n-id="zotero-tabflow-pref-enable-batch-selection"/>
-                </hbox>
+                    <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-batch-selection-desc"></description>
+                </html:div>
             </html:div>
 
             <html:div class="tabflow-subgroup">
                 <checkbox id="tabflow-pref-enablePinnedTabs" preference="extensions.zotero.tabflow.enablePinnedTabs" native="true" data-l10n-id="zotero-tabflow-pref-enable-pinned-tabs"/>
                 <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-pinned-tabs-desc"></description>
+                <html:div id="tabflow-sub-pinnedIconOnly" class="tabflow-subordinate-stack">
+                    <checkbox id="tabflow-pref-pinnedIconOnly" preference="extensions.zotero.tabflow.pinnedIconOnly" native="true" data-l10n-id="zotero-tabflow-pref-pinned-icon-only"/>
+                </html:div>
             </html:div>
 
             <html:div class="tabflow-subgroup">
@@ -106,6 +114,7 @@
                                 <menuitem value="source" data-l10n-id="zotero-tabflow-subtitle-source"/>
                                 <menuitem value="creatorYear" data-l10n-id="zotero-tabflow-subtitle-creator-year"/>
                                 <menuitem value="collection" data-l10n-id="zotero-tabflow-subtitle-collection"/>
+                                <menuitem value="lastViewed" data-l10n-id="zotero-tabflow-subtitle-last-viewed"/>
                                 <menuitem value="none" data-l10n-id="zotero-tabflow-subtitle-none"/>
                             </menupopup>
                         </menulist>
@@ -137,11 +146,25 @@
             <html:div class="tabflow-subgroup">
                 <checkbox id="tabflow-pref-enableSessions" preference="extensions.zotero.tabflow.enableSessions" native="true" data-l10n-id="zotero-tabflow-pref-enable-sessions"/>
                 <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-sessions-desc"></description>
+                <html:div id="tabflow-sub-enableRollingSnapshots" class="tabflow-subordinate-stack">
+                    <checkbox id="tabflow-pref-enableRollingSnapshots" preference="extensions.zotero.tabflow.enableRollingSnapshots" native="true" data-l10n-id="zotero-tabflow-pref-enable-rolling-snapshots"/>
+                    <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-rolling-snapshots-desc"></description>
+                </html:div>
             </html:div>
 
             <html:div class="tabflow-subgroup">
                 <checkbox id="tabflow-pref-enableTabSleep" preference="extensions.zotero.tabflow.enableTabSleep" native="true" data-l10n-id="zotero-tabflow-pref-enable-tab-sleep"/>
                 <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-tab-sleep-desc"></description>
+                <html:div id="tabflow-sub-autoSleepMinutes" class="tabflow-subordinate-stack">
+                    <html:div class="tabflow-subordinate-row">
+                        <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-auto-sleep-minutes" control="tabflow-pref-autoSleepMinutes"></label>
+                        <html:input class="html-input" id="tabflow-pref-autoSleepMinutes" type="number" min="0" max="1440" step="1" data-preference="extensions.zotero.tabflow.autoSleepMinutes"/>
+                    </html:div>
+                    <html:div class="tabflow-subordinate-row">
+                        <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-active-reader-budget" control="tabflow-pref-activeReaderBudget"></label>
+                        <html:input class="html-input" id="tabflow-pref-activeReaderBudget" type="number" min="0" max="100" step="1" data-preference="extensions.zotero.tabflow.activeReaderBudget"/>
+                    </html:div>
+                </html:div>
             </html:div>
 
             <html:div class="tabflow-subgroup">

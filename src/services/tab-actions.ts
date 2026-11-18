@@ -1,14 +1,19 @@
 import { getPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
-import type { VirtualMemberMeta } from '../core/types.ts';
-import type { ItemMetadataService } from './item-metadata.ts';
+import type { TabCloseOptions, VirtualMemberMeta } from '../core/types.ts';
+import { openAttachmentFolder } from './attachment-folder.ts';
+import { uncategorizedCollectionLabel, type ItemMetadataService } from './item-metadata.ts';
 
 export class TabActionService {
-	constructor(
-		private readonly win: Window,
-		private readonly store: TabFlowStore,
-		private readonly meta: ItemMetadataService,
-	) {}
+	private readonly win: Window;
+	private readonly store: TabFlowStore;
+	private readonly meta: ItemMetadataService;
+
+	constructor(win: Window, store: TabFlowStore, meta: ItemMetadataService) {
+		this.win = win;
+		this.store = store;
+		this.meta = meta;
+	}
 
 	selectTab(tabId: string): void {
 		const tabs = (this.win as any).Zotero_Tabs;
@@ -23,38 +28,76 @@ export class TabActionService {
 	}
 
 	async closeTab(tabId: string, preserveVirtual = true): Promise<void> {
-		const tabs = (this.win as any).Zotero_Tabs;
-		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
-		if (!tabs || !tab || tab.type === 'library') return;
-		const tracked = this.meta.buildTrackedTabs().find((x) => x.tab.id === tabId);
-		if (tracked && preserveVirtual && getPref('enableVirtualMembers') && tracked.groupId && tracked.itemID) {
-			const vMeta: VirtualMemberMeta = {
-				key: tracked.key,
-				itemID: tracked.itemID,
-				parentItemID: tracked.parentItemID,
-				title: tracked.title,
-				shortTitle: tracked.shortTitle,
-				filename: tracked.filename,
-				source: tracked.source,
-				creatorYear: tracked.creatorYear,
-				collection: tracked.collection,
-				type: tab.type,
-			};
-			this.store.saveVirtualMember(vMeta);
-		}
-		tabs.close(tabId);
+		await this.closeTabs([tabId], { preserveVirtual });
 	}
 
-	sleepTab(tabId: string): void {
-		if (!getPref('enableTabSleep')) return;
+	async closeTabs(tabIds: readonly string[], options: TabCloseOptions = {}): Promise<number> {
+		const tabs = (this.win as any).Zotero_Tabs;
+		if (!tabs || !tabIds.length) return 0;
+		const preserveVirtual = options.preserveVirtual ?? true;
+		const protectPinned = options.protectPinned ?? false;
+		const protectSelected = options.protectSelected ?? false;
+		const selectedID = this.meta.getSelectedTabID();
+		const nativeMap = new Map(this.meta.getNativeTabs().map((t) => [t.id, t]));
+		const trackedMap = new Map(this.meta.buildTrackedTabs().map((t) => [t.tab.id, t]));
+
+		const toClose: string[] = [];
+		for (const id of new Set(tabIds)) {
+			const tab = nativeMap.get(id);
+			if (!tab || tab.type === 'library') continue;
+			if (protectSelected && id === selectedID) continue;
+			const tracked = trackedMap.get(id);
+			if (protectPinned && tracked?.pinned) continue;
+			if (tracked && preserveVirtual && getPref('enableVirtualMembers') && tracked.groupId && tracked.itemID) {
+				const vMeta: VirtualMemberMeta = {
+					key: tracked.key,
+					itemID: tracked.itemID,
+					parentItemID: tracked.parentItemID,
+					title: tracked.title,
+					shortTitle: tracked.shortTitle,
+					filename: tracked.filename,
+					source: tracked.source,
+					creatorYear: tracked.creatorYear,
+					collection: tracked.collection,
+					type: tab.type,
+				};
+				this.store.saveVirtualMember(vMeta);
+			}
+			toClose.push(id);
+		}
+		if (!toClose.length) return 0;
+		tabs.close(toClose.length === 1 ? toClose[0] : toClose);
+		return toClose.length;
+	}
+
+	undoCloseTab(): boolean {
+		const tabs = (this.win as any).Zotero_Tabs;
+		if (typeof tabs?.undoClose !== 'function') return false;
+		try {
+			tabs.undoClose();
+			return true;
+		} catch (error) {
+			Zotero.logError(error as Error);
+			return false;
+		}
+	}
+
+	sleepTab(tabId: string): boolean {
+		if (!getPref('enableTabSleep')) return false;
 		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
 		const key = this.meta.tabKey(tab);
-		if (!key || this.store.isPinned(key)) return;
-		this.store.setSleeping(key, true);
+		if (!key || this.store.isPinned(key)) return false;
+		const tabs = (this.win as any).Zotero_Tabs;
 		const reader = (Zotero.Reader as any)?.getByTabID?.(tabId);
-		if (reader?.unload) {
-			try { reader.unload(); } catch { /* Best-effort unload */ }
+		let unloaded = false;
+		if (typeof tabs?.unload === 'function') {
+			try { tabs.unload(tabId); unloaded = true; } catch { /* fallback below */ }
 		}
+		if (!unloaded && reader?.unload) {
+			try { reader.unload(); unloaded = true; } catch { /* ignore */ }
+		}
+		this.store.setSleeping(key, true);
+		return unloaded;
 	}
 
 	sleepInactiveTabs(): number {
@@ -89,7 +132,7 @@ export class TabActionService {
 		const filterSet = onlyTabIDs ? new Set(onlyTabIDs) : null;
 		for (const t of this.meta.buildTrackedTabs()) {
 			if (filterSet && !filterSet.has(t.tab.id)) continue;
-			if (!t.groupId && t.collection && t.collection !== '未分类集合') {
+			if (!t.groupId && t.collection && t.collection !== uncategorizedCollectionLabel()) {
 				const group = this.store.ensureGroup(t.collection);
 				this.store.assignKey(t.key, group.id);
 				moved++;
@@ -103,14 +146,28 @@ export class TabActionService {
 		const itemID = tab?.data?.itemID;
 		if (typeof itemID !== 'number') return;
 		const item: any = Zotero.Items.get(itemID);
-		const att = item?.isFileAttachment?.() ? item : await item?.getBestAttachment?.();
-		if (att) await (this.win as any).ZoteroPane?.showAttachmentInFilesystem?.(att.id);
+		await openAttachmentFolder(item, this.win);
 	}
 
 	showInLibrary(tabId: string): void {
 		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
 		const primary = this.meta.resolvePrimaryItem(tab?.data?.itemID ?? null);
 		if (primary) (this.win as any).ZoteroPane?.selectItem?.(primary.id);
+	}
+
+	showCollectionInLibrary(tabId: string): boolean {
+		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
+		const primary = this.meta.resolvePrimaryItem(tab?.data?.itemID ?? null);
+		if (!primary) return false;
+		const cols: number[] = primary.getCollections?.() || [];
+		const pane = (this.win as any).ZoteroPane;
+		if (cols.length && pane?.collectionsView?.selectCollection) {
+			pane.collectionsView.selectCollection(cols[0]);
+			pane.selectItem?.(primary.id);
+			return true;
+		}
+		pane?.selectItem?.(primary.id);
+		return false;
 	}
 
 	copyReference(tabId: string): void {

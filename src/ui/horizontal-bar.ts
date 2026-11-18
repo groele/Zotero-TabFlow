@@ -1,4 +1,5 @@
 import { contrastInk } from '../core/color-utils.ts';
+import { t } from '../core/i18n.ts';
 import { getPref, setPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { TrackedTab } from '../core/types.ts';
@@ -8,6 +9,7 @@ import type { TabActionService } from '../services/tab-actions.ts';
 import { HorizontalDragController } from './horizontal-drag.ts';
 import { GroupSection, reconcileGroupSections } from './group-section.ts';
 import { createSvgIcon } from './icons.ts';
+import { renderPinnedStrip } from './pinned-strip.ts';
 import type { PopoverController } from './popovers.ts';
 import type { SpotlightController } from './spotlight.ts';
 import type { TabContextMenuController } from './tab-context-menu.ts';
@@ -89,16 +91,18 @@ export class HorizontalBarController {
 		const host = this.doc.getElementById('tab-bar-container');
 		if (!host) return;
 		this.mount();
-		const enabled = getPref('enableHorizontalGroups');
+		const sidebarHealthy = getPref('enableVerticalSidebar') && !getPref('verticalSidebarCollapsed') && Boolean(this.doc.getElementById('ztf-sidebar')?.isConnected);
+		const compactMode = getPref('compactTopBar') && sidebarHealthy;
+		const enabled = getPref('enableHorizontalGroups') && !compactMode;
 		const mounted = enabled && Boolean(this.root?.isConnected);
-		host.toggleAttribute('data-ztf-inline', mounted);
+		host.toggleAttribute('data-ztf-inline', mounted || compactMode);
 		if (!mounted) {
 			if (this.pinnedStrip) this.pinnedStrip.hidden = true;
 			for (const group of this.groupSections.values()) group.pause();
 		}
 		if (this.root) this.root.hidden = !mounted;
-		this.renderToolbarButtons();
-		if (!mounted || !this.root || this.root.querySelector('.ztf-inline-edit:not(.ztf-group-edit)')) return;
+		this.renderToolbarButtons(compactMode, sidebarHealthy);
+		if (!mounted || !this.root || this.root.querySelector('.ztf-inline-edit')) return;
 
 		const tracked = this.meta.buildTrackedTabs();
 		const selectedID = this.meta.getSelectedTabID();
@@ -108,24 +112,18 @@ export class HorizontalBarController {
 		if (this.pinnedStrip) {
 			const strip = this.pinnedStrip;
 			const pinnedScroll = strip.scrollLeft;
-			strip.replaceChildren();
-			strip.hidden = pinnedTabs.length === 0;
-			for (const t of pinnedTabs) {
-				const chip = this.h('button', `ztf-pinned-chip${t.tab.id === selectedID ? ' selected' : ''}`);
-				chip.type = 'button';
-				const labelSpan = this.h('span');
-				labelSpan.textContent = this.meta.getDisplayTitle(t);
-				chip.append(createSvgIcon(this.doc, 'pin', 12), labelSpan);
-				chip.title = t.title;
-				chip.onclick = () => this.actions.selectTab(t.tab.id);
-				chip.oncontextmenu = (e: Event) => this.menus.openTabMenu(e as MouseEvent, t);
-				strip.append(chip);
-			}
+			renderPinnedStrip(this.doc, strip, pinnedTabs, selectedID, this.store, this.meta, this.actions, this.menus);
 			strip.scrollLeft = pinnedScroll;
 		}
 
 		const unpinned = tracked.filter((t) => !t.pinned);
-		const groups = this.store.orderedGroups();
+		const rawGroups = this.store.orderedGroups();
+		const groups = rawGroups.filter((g) => {
+			if (g.id || rawGroups.length > 1 || this.store.state.ungroupedName) return true;
+			const hasMembers = unpinned.some((item) => !item.groupId);
+			const hasVirtuals = getPref('enableVirtualMembers') && Object.values(this.store.state.virtualMembers).some((m) => !this.store.groupOfKey(m.key));
+			return hasMembers || hasVirtuals;
+		});
 		for (const g of groups) {
 			let section = this.groupSections.get(g.id);
 			if (!section) {
@@ -159,7 +157,7 @@ export class HorizontalBarController {
 					const label = this.h('span', 'ztf-doc-title');
 					label.textContent = `◌ ${this.meta.getDisplayTitle(v)}`;
 					vNode.append(label);
-					vNode.title = `虚拟保留成员（点击重新加载）：${v.title}`;
+					vNode.title = t('zotero-tabflow-virtual-reload-tip', `虚拟保留成员（点击重新加载）：${v.title}`, { title: v.title });
 					vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id).then(this.onRefresh);
 					vNode.oncontextmenu = (e: Event) => this.menus.openVirtualMenu(e as MouseEvent, v, g.id);
 					nodes.append(vNode);
@@ -172,8 +170,8 @@ export class HorizontalBarController {
 			const addBtn = this.h('button', 'ztf-add-group');
 			addBtn.type = 'button';
 			addBtn.append(createSvgIcon(this.doc, 'plus', 13));
-			addBtn.title = '新建分组';
-			addBtn.onclick = () => this.beginInlineEdit(addBtn, '', (next) => this.store.ensureGroup(next), '新分组名称…');
+			addBtn.title = t('zotero-tabflow-new-group-title', '新建分组');
+			addBtn.onclick = () => this.beginInlineEdit(addBtn, '', (next) => this.store.ensureGroup(next), t('zotero-tabflow-new-group-placeholder', '新分组名称…'));
 			this.root.append(addBtn);
 			this.addGroupButton = addBtn;
 		}
@@ -214,41 +212,56 @@ export class HorizontalBarController {
 		input.select();
 	}
 
-	private buildTabNode(t: TrackedTab, selectedID: string): HTMLElement {
-		const node = this.h('div', `ztf-doc${t.tab.id === selectedID ? ' selected' : ''}${t.status === 'sleeping' ? ' ztf-sleeping' : ''}`);
-		node.title = `${t.title}\n集合：${t.collection}`;
+	private buildTabNode(tab: TrackedTab, selectedID: string): HTMLElement {
+		const node = this.h('div', `ztf-doc${tab.tab.id === selectedID ? ' selected' : ''}${tab.status === 'sleeping' ? ' ztf-sleeping' : ''}`);
+		node.title = `${tab.title}\n${t('zotero-tabflow-collection-label', '集合')}：${tab.collection}`;
 		const label = this.h('span', 'ztf-doc-title');
-		label.textContent = `${t.status === 'sleeping' ? '💤 ' : ''}${this.meta.getDisplayTitle(t)}`;
+		label.textContent = `${tab.status === 'sleeping' ? '💤 ' : ''}${this.meta.getDisplayTitle(tab)}`;
 		const closeBtn = this.h('button', 'ztf-doc-close');
 		closeBtn.type = 'button';
-		closeBtn.setAttribute('aria-label', `关闭标签：${t.title}`);
+		closeBtn.setAttribute('aria-label', t('zotero-tabflow-close-tab-aria', `关闭标签：${tab.title}`, { title: tab.title }));
 		closeBtn.append(createSvgIcon(this.doc, 'close', 11));
 		closeBtn.onclick = (e) => {
 			e.stopPropagation();
-			void this.actions.closeTab(t.tab.id, true).then(this.onRefresh);
+			void this.actions.closeTab(tab.tab.id, true).then(this.onRefresh);
 		};
 		node.append(label, closeBtn);
-		node.onclick = () => this.actions.selectTab(t.tab.id);
+		node.onclick = () => this.actions.selectTab(tab.tab.id);
 		node.onauxclick = (e: Event) => {
 			if ((e as MouseEvent).button === 1) {
 				e.preventDefault();
-				void this.actions.closeTab(t.tab.id, true).then(this.onRefresh);
+				void this.actions.closeTab(tab.tab.id, true).then(this.onRefresh);
 			}
 		};
-		node.oncontextmenu = (e: Event) => this.menus.openTabMenu(e as MouseEvent, t);
-		this.drag.bindTabDrag(node, t);
+		node.oncontextmenu = (e: Event) => this.menus.openTabMenu(e as MouseEvent, tab);
+		this.drag.bindTabDrag(node, tab);
 		return node;
 	}
 
-	private renderToolbarButtons(): void {
+	private renderToolbarButtons(compactMode = false, sidebarHealthy = false): void {
 		if (!this.toolbarActions) return;
 		this.toolbarActions.textContent = '';
+		if (compactMode || (getPref('enableHorizontalGroups') && sidebarHealthy)) {
+			const btn = this.h('button', `ztf-tb-btn${compactMode ? ' active' : ''}`);
+			btn.type = 'button';
+			btn.textContent = compactMode
+				? t('zotero-tabflow-expand-topbar', '展开横栏')
+				: t('zotero-tabflow-compact-topbar', '精简顶栏');
+			btn.title = compactMode
+				? t('zotero-tabflow-expand-topbar-tip', '恢复水平分组标签栏')
+				: t('zotero-tabflow-compact-topbar-tip', '收起水平文献标签以节省顶部空间（保留文库与侧栏）');
+			btn.onclick = () => {
+				setPref('compactTopBar', !compactMode);
+				this.onRefresh();
+			};
+			this.toolbarActions.append(btn);
+		}
 		if (getPref('enableVerticalSidebar')) {
 			const open = !getPref('verticalSidebarCollapsed');
 			const btn = this.h('button', `ztf-tb-btn${open ? ' active' : ''}`);
 			btn.type = 'button';
 			btn.append(createSvgIcon(this.doc, 'sidebar', 13));
-			btn.title = open ? '收起垂直标签侧边栏' : '展开垂直标签侧边栏';
+			btn.title = open ? t('zotero-tabflow-sidebar-toggle-close', '收起垂直标签侧边栏') : t('zotero-tabflow-sidebar-toggle-open', '展开垂直标签侧边栏');
 			btn.onclick = () => {
 				setPref('verticalSidebarCollapsed', open);
 				this.onRefresh();
@@ -259,14 +272,15 @@ export class HorizontalBarController {
 			const btn = this.h('button', 'ztf-tb-btn');
 			btn.type = 'button';
 			btn.append(createSvgIcon(this.doc, 'search', 12), this.doc.createTextNode('Spotlight'));
-			btn.title = '快速搜索与命令 (Ctrl+P)';
+			btn.title = 'Spotlight (Ctrl+P)';
 			btn.onclick = () => this.spotlight.open(btn);
 			this.toolbarActions.append(btn);
 		}
 		if (getPref('enableSessions')) {
 			const btn = this.h('button', 'ztf-tb-btn');
 			btn.type = 'button';
-			btn.append(createSvgIcon(this.doc, 'layers', 12), this.doc.createTextNode(`会话 (${this.store.state.sessions.length})`));
+			const sessionCount = this.store.state.sessions.length;
+			btn.append(createSvgIcon(this.doc, 'layers', 12), this.doc.createTextNode(t('zotero-tabflow-sessions-btn', `会话 (${sessionCount})`, { count: sessionCount })));
 			btn.onclick = () => this.popovers.openSessionsMenu(btn);
 			this.toolbarActions.append(btn);
 		}
@@ -274,7 +288,7 @@ export class HorizontalBarController {
 			const count = this.tracker.getStaleTabs().length;
 			const btn = this.h('button', `ztf-tb-btn${count ? ' warn' : ''}`);
 			btn.type = 'button';
-			btn.append(createSvgIcon(this.doc, 'clock', 12), this.doc.createTextNode(`建议关闭 (${count})`));
+			btn.append(createSvgIcon(this.doc, 'clock', 12), this.doc.createTextNode(t('zotero-tabflow-stale-btn', `建议关闭 (${count})`, { count })));
 			btn.onclick = () => this.popovers.openStaleMenu(btn);
 			this.toolbarActions.append(btn);
 		}

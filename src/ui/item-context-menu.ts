@@ -1,3 +1,4 @@
+import { t } from '../core/i18n.ts';
 import { getPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
@@ -34,7 +35,7 @@ export class ItemContextMenuController {
 		if (!itemMenu || this.itemMenuEl) return;
 		const menu = this.xul('menu');
 		menu.id = 'ztf-item-open-group';
-		menu.setAttribute('label', 'TabFlow：打开并分组');
+		menu.setAttribute('label', t('zotero-tabflow-item-open-group', 'TabFlow：打开并分组'));
 		const sub = this.xul('menupopup');
 		menu.append(sub);
 		itemMenu.append(menu);
@@ -59,9 +60,10 @@ export class ItemContextMenuController {
 		if (!this.itemSubPopup) return;
 		this.itemSubPopup.textContent = '';
 		const selected: any[] = (this.win as any).ZoteroPane?.getSelectedItems?.() || [];
-		this.item(this.itemSubPopup, '打开到新分组…', () => {
-			const val = { value: selected[0]?.getField?.('title')?.slice(0, 30) || '新分组' };
-			if (!Services.prompt.prompt(this.win, '打开到新分组', '分组名称：', val, null, {}) || !val.value.trim()) return;
+		this.item(this.itemSubPopup, t('zotero-tabflow-item-open-new-group', '打开到新分组…'), () => {
+			const fallback = selected[0]?.getField?.('title')?.slice(0, 30) || t('zotero-tabflow-new-group-title', '新分组');
+			const val = { value: fallback };
+			if (!Services.prompt.prompt(this.win, t('zotero-tabflow-item-open-new-group', '打开到新分组'), t('zotero-tabflow-new-group-prompt', '分组名称：'), val, null, {}) || !val.value.trim()) return;
 			const g = this.store.ensureGroup(val.value);
 			void (async () => {
 				for (const it of selected) await this.actions.openVirtualOrItem(it.id, g.id);

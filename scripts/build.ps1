@@ -20,7 +20,11 @@ $entries += @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'locale') -Recu
 foreach ($entry in $entries) { if (-not (Test-Path -LiteralPath $entry.Source -PathType Leaf)) { throw "Missing runtime file: $($entry.Name)" } }
 $resolvedOutput = [IO.Path]::GetFullPath($OutputPath)
 if (-not $VerifyOnly) {
-    New-Item -ItemType Directory -Path (Split-Path -Parent $resolvedOutput) -Force | Out-Null
+    $distDir = Split-Path -Parent $resolvedOutput
+    New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+    Get-ChildItem -LiteralPath $distDir -Filter 'Zotero-TabFlow-*.xpi' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -ne $resolvedOutput } |
+        Remove-Item -Force
     Add-Type -AssemblyName System.IO.Compression
     $stream = [IO.File]::Open($resolvedOutput, [IO.FileMode]::Create)
     $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create)

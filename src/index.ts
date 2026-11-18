@@ -29,6 +29,14 @@ class WindowWorkspace {
 	private ageTimer: number | null = null;
 	private lastSelected = '';
 	private disposed = false;
+	private ageTickCount = 0;
+
+	private saveRollingIfNeeded(): void {
+		const keys = this.meta.buildTrackedTabs().map((t) => t.key);
+		if (keys.length || this.store.state.groups.length) {
+			this.store.saveRollingSnapshot(keys);
+		}
+	}
 
 	constructor(
 		private readonly win: Window,
@@ -39,12 +47,15 @@ class WindowWorkspace {
 		this.actions = new TabActionService(win, store, this.meta);
 		this.tracker = new ActivityTrackerService(store, this.meta);
 		const refresh = () => this.schedule();
-		this.tabMenus = new TabContextMenuController(win, doc, store, this.meta, this.actions, refresh);
-		this.itemMenus = new ItemContextMenuController(win, doc, store, this.actions, refresh);
 		this.popovers = new PopoverController(win, doc, store, this.meta, this.actions, this.tracker, refresh);
-		this.spotlight = new SpotlightController(win, doc, store, this.meta, this.actions, refresh);
+		this.tabMenus = new TabContextMenuController(win, doc, store, this.meta, this.actions, refresh, () => this.popovers.openPublicationSuggest());
+		this.itemMenus = new ItemContextMenuController(win, doc, store, this.actions, refresh);
+		this.spotlight = new SpotlightController(win, doc, store, this.meta, this.actions, this.popovers, refresh);
 		this.horizontal = new HorizontalBarController(win, doc, store, this.meta, this.actions, this.tracker, this.tabMenus, this.popovers, this.spotlight, refresh);
-		this.sidebar = new VerticalSidebarController(win, doc, store, this.meta, this.actions, this.tabMenus, refresh);
+		this.sidebar = new VerticalSidebarController(win, doc, store, this.meta, this.actions, this.tabMenus, refresh, () => {
+			const latest = this.store.state.sessions[0] || this.store.state.rollingSessions?.[0];
+			if (latest) void this.popovers.previewAndRestoreSession(latest);
+		});
 	}
 
 	init(): void {
@@ -66,6 +77,11 @@ class WindowWorkspace {
 				notify: (event: string, _type: string, ids: Array<string | number>) => {
 					const tabIds = ids.map(String);
 					if (event === 'add') {
+						for (const t of this.meta.buildTrackedTabs()) {
+							if (tabIds.includes(t.tab.id) && this.store.state.collapsed.includes(t.groupId)) {
+								this.store.setCollapsed(t.groupId, false, false);
+							}
+						}
 						if (getPref('enableCollectionAutoGroup')) {
 							this.win.setTimeout(() => {
 								if (!this.disposed) this.actions.autoGroupByCollection(tabIds);
@@ -94,7 +110,14 @@ class WindowWorkspace {
 			this.observer!.observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-id'] });
 		}
 
-		this.ageTimer = this.win.setInterval(() => this.schedule(), 3_600_000);
+		this.ageTimer = this.win.setInterval(() => {
+			for (const t of this.tracker.getIdleTabsForSleep()) {
+				this.actions.sleepTab(t.tab.id);
+			}
+			this.ageTickCount++;
+			if (this.ageTickCount % 5 === 0) this.saveRollingIfNeeded();
+			this.schedule();
+		}, 60_000);
 		this.refresh();
 	}
 
@@ -120,12 +143,13 @@ class WindowWorkspace {
 				this.store.setCollapsed(active.groupId, false, false);
 			}
 		}
-		this.horizontal.render();
 		this.sidebar.render();
+		this.horizontal.render();
 	}
 
 	dispose(): void {
 		this.disposed = true;
+		try { this.saveRollingIfNeeded(); } catch { /* Best-effort snapshot on unload */ }
 		if (this.refreshTimer !== null) this.win.clearTimeout(this.refreshTimer);
 		if (this.ageTimer !== null) this.win.clearInterval(this.ageTimer);
 		this.observer?.disconnect();

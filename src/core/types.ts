@@ -1,9 +1,16 @@
 export type TabDisplayMode = 'original' | 'note' | 'both';
 export type MultiCollectionStrategy = 'active' | 'existing' | 'first';
 export type VerticalTitleMode = 'title' | 'shortTitle' | 'filename';
-export type VerticalSubtitleMode = 'source' | 'creatorYear' | 'collection' | 'none';
+export type VerticalSubtitleMode = 'source' | 'creatorYear' | 'collection' | 'lastViewed' | 'none';
 export type SidebarViewMode = 'groups' | 'collection' | 'recent';
 export type TabLifecycleStatus = 'active' | 'sleeping' | 'virtual';
+export type SessionSnapshotKind = 'manual' | 'pre-replace' | 'rolling' | 'template';
+
+export interface TabCloseOptions {
+	preserveVirtual?: boolean;
+	protectPinned?: boolean;
+	protectSelected?: boolean;
+}
 
 export interface TabGroup {
 	id: string;
@@ -44,6 +51,10 @@ export interface TabSessionSnapshot {
 	openKeys: string[];
 	order?: string[];
 	collapsed?: string[];
+	remarks?: Record<string, TabRemark>;
+	ungroupedName?: string;
+	ungroupedColor?: string;
+	kind?: SessionSnapshotKind;
 }
 
 export interface TabFlowState {
@@ -61,6 +72,7 @@ export interface TabFlowState {
 	sleeping: string[];
 	virtualMembers: Record<string, VirtualMemberMeta>;
 	sessions: TabSessionSnapshot[];
+	rollingSessions?: TabSessionSnapshot[];
 }
 
 export interface NativeTabLike {

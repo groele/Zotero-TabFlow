@@ -1,5 +1,13 @@
 import { normalizeHexColor } from './color-utils.ts';
+import { t } from './i18n.ts';
 import { PREF_PREFIX, getPref } from './prefs.ts';
+import {
+	appendManualSession,
+	appendRollingSnapshot,
+	applySessionLayout,
+	buildSessionSnapshot,
+	formatSnapshotTimestamp,
+} from './session-store.ts';
 import type {
 	TabDisplayMode,
 	TabFlowState,
@@ -27,6 +35,7 @@ export function createEmptyState(): TabFlowState {
 		sleeping: [],
 		virtualMembers: {},
 		sessions: [],
+		rollingSessions: [],
 	};
 }
 
@@ -71,6 +80,7 @@ export class TabFlowStore {
 				sleeping: [...new Set(Array.isArray(parsed.sleeping) ? parsed.sleeping : [])],
 				virtualMembers: parsed.virtualMembers && typeof parsed.virtualMembers === 'object' ? { ...parsed.virtualMembers } : {},
 				sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+				rollingSessions: Array.isArray(parsed.rollingSessions) ? parsed.rollingSessions : [],
 			};
 			this.readOnly = false;
 		} catch (error) {
@@ -93,7 +103,7 @@ export class TabFlowStore {
 
 	orderedGroups(): TabGroup[] {
 		const all: TabGroup[] = [
-			{ id: '', name: this.state.ungroupedName || '未分组', color: this.state.ungroupedColor || '#737373' },
+			{ id: '', name: this.state.ungroupedName || t('zotero-tabflow-ungrouped', '未分组'), color: this.state.ungroupedColor || '#737373' },
 			...this.state.groups,
 		];
 		const order = [...new Set([...(this.state.order || []), ...all.map((g) => g.id)])];
@@ -101,7 +111,7 @@ export class TabFlowStore {
 	}
 
 	ensureGroup(name: string): TabGroup {
-		const clean = name.trim().slice(0, 60);
+		const clean = name.trim().slice(0, 60) || t('zotero-tabflow-default-group-name', '新分组');
 		const existing = this.state.groups.find((g) => g.name === clean);
 		if (existing) return existing;
 		const id = `g-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -245,49 +255,64 @@ export class TabFlowStore {
 	}
 
 	saveSession(name: string, openKeys: string[]): TabSessionSnapshot {
-		const snapshot: TabSessionSnapshot = {
-			id: `s-${Date.now()}`,
-			name: name.trim().slice(0, 60) || '工作区会话',
-			createdAt: Date.now(),
-			groups: this.state.groups.map((g) => ({ ...g })),
-			assignments: { ...this.state.assignments },
-			pinned: [...this.state.pinned],
-			openKeys: [...new Set(openKeys)],
-			order: [...this.state.order],
-			collapsed: [...this.state.collapsed],
-		};
-		this.state.sessions = [snapshot, ...this.state.sessions].slice(0, 30);
+		const snapshot = buildSessionSnapshot(this.state, name || t('zotero-tabflow-session-default-name', '工作区会话'), openKeys, 'manual');
+		appendManualSession(this.state, snapshot);
 		this.save();
 		return snapshot;
 	}
 
+	savePreReplaceSnapshot(openKeys: string[]): TabSessionSnapshot {
+		const stamp = formatSnapshotTimestamp(Date.now());
+		const label = `${t('zotero-tabflow-session-pre-replace-prefix', '替换前备份')} · ${stamp}`;
+		const snapshot = buildSessionSnapshot(this.state, label, openKeys, 'pre-replace');
+		appendManualSession(this.state, snapshot);
+		this.save();
+		return snapshot;
+	}
+
+	saveLayoutTemplate(name: string): TabSessionSnapshot {
+		const snapshot = buildSessionSnapshot(this.state, name || t('zotero-tabflow-template-default-name', '布局模板'), [], 'template');
+		appendManualSession(this.state, snapshot);
+		this.save();
+		return snapshot;
+	}
+
+	saveRollingSnapshot(openKeys: string[]): TabSessionSnapshot | null {
+		if (!getPref('enableRollingSnapshots')) return null;
+		const stamp = formatSnapshotTimestamp(Date.now());
+		const label = `${t('zotero-tabflow-rolling-prefix', '自动快照')} · ${stamp}`;
+		const snapshot = buildSessionSnapshot(this.state, label, openKeys, 'rolling');
+		if (!appendRollingSnapshot(this.state, snapshot)) return null;
+		this.save(false);
+		return snapshot;
+	}
+
+	importSessions(snapshots: readonly TabSessionSnapshot[]): number {
+		let count = 0;
+		for (const snap of [...snapshots].reverse()) {
+			if (!snap || typeof snap.name !== 'string' || !Array.isArray(snap.groups)) continue;
+			const copy: TabSessionSnapshot = {
+				...snap,
+				id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+				kind: snap.kind || 'manual',
+			};
+			appendManualSession(this.state, copy);
+			count++;
+		}
+		if (count) this.save();
+		return count;
+	}
+
 	deleteSession(id: string): void {
 		this.state.sessions = this.state.sessions.filter((s) => s.id !== id);
+		if (this.state.rollingSessions?.length) {
+			this.state.rollingSessions = this.state.rollingSessions.filter((s) => s.id !== id);
+		}
 		this.save();
 	}
 
 	restoreSessionLayout(snapshot: TabSessionSnapshot, merge: boolean): void {
-		const existing = new Set(this.state.groups.map((g) => g.id));
-		const added = snapshot.groups.filter((g) => !merge || !existing.has(g.id));
-		this.state.groups = [...(merge ? this.state.groups : []), ...added.map((g) => ({ ...g }))];
-		const validIds = new Set(['', ...this.state.groups.map((g) => g.id)]);
-		const order = [...(merge ? this.state.order : []), ...(snapshot.order ?? [])];
-		this.state.order = [...new Set([...order.filter((id) => validIds.has(id)), ...validIds])];
-		if (merge) {
-			const addedIds = new Set(added.map((g) => g.id));
-			this.state.collapsed = [...new Set([
-				...this.state.collapsed,
-				...(snapshot.collapsed ?? []).filter((id) => addedIds.has(id)),
-			])];
-		} else {
-			this.state.collapsed = (snapshot.collapsed ?? []).filter((id) => validIds.has(id));
-		}
-
-		if (!merge) this.state.assignments = {};
-		for (const [key, id] of Object.entries(snapshot.assignments)) {
-			if (id && validIds.has(id) && (!merge || !this.groupOfKey(key))) this.state.assignments[key] = id;
-		}
-		this.state.pinned = [...new Set([...(merge ? this.state.pinned : []), ...snapshot.pinned])];
+		applySessionLayout(this.state, snapshot, merge);
 		this.save();
 	}
 }

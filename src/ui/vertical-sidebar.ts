@@ -1,23 +1,29 @@
+import { t } from '../core/i18n.ts';
 import { getPref, setPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
-import type { SidebarViewMode, TrackedTab } from '../core/types.ts';
+import type { SidebarViewMode } from '../core/types.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { GroupSection, reconcileGroupSections } from './group-section.ts';
-import { createSvgIcon, type IconName } from './icons.ts';
+import { createSvgIcon } from './icons.ts';
 import { SidebarHoverCard } from './sidebar-hover.ts';
+import { bindSidebarKeyboardNavigation, captureSidebarFocusAnchor, restoreSidebarFocusAnchor } from './sidebar-keyboard.ts';
+import { buildSidebarTabRow, buildSidebarVirtualRow, type SidebarRowDeps } from './sidebar-row.ts';
 import { SidebarSelection } from './sidebar-selection.ts';
+import { computeWorkspaceStatusCounts, renderSidebarEmptyState, renderSidebarStatusBar } from './sidebar-status.ts';
 import type { TabContextMenuController } from './tab-context-menu.ts';
 
 export class VerticalSidebarController {
 	private sidebar: HTMLElement | null = null;
 	private listEl: HTMLDivElement | null = null;
+	private statusEl: HTMLDivElement | null = null;
 	private selection: SidebarSelection | null = null;
 	private searchInput: HTMLInputElement | null = null;
 	private hoverCard: SidebarHoverCard;
 	private viewMode: SidebarViewMode = 'groups';
 	private draggedKey: string | null = null;
 	private groupSections = new Map<string, GroupSection>();
+	private collapsedSections = new Set<string>();
 
 	constructor(
 		private readonly win: Window,
@@ -27,6 +33,7 @@ export class VerticalSidebarController {
 		private readonly actions: TabActionService,
 		private readonly menus: TabContextMenuController,
 		private readonly onRefresh: () => void,
+		private readonly onRestoreLastSession?: () => void,
 	) {
 		this.hoverCard = new SidebarHoverCard(win, doc, store);
 	}
@@ -52,42 +59,50 @@ export class VerticalSidebarController {
 		const title = this.h('span', 'ztf-sb-title ztf-sb-hide-collapsed');
 		title.append(createSvgIcon(this.doc, 'layers', 13), this.doc.createTextNode('TabFlow'));
 
-		const headerActions = this.h('div', 'ztf-sb-header-actions');
-		const autoBtn = this.h('button', 'ztf-sb-icon-btn ztf-sb-hide-collapsed');
-		autoBtn.type = 'button';
-		autoBtn.title = '按 Zotero 集合自动归组';
-		autoBtn.append(createSvgIcon(this.doc, 'folder', 13));
-		autoBtn.onclick = () => { this.actions.autoGroupByCollection(); this.onRefresh(); };
-
-		const sleepBtn = this.h('button', 'ztf-sb-icon-btn ztf-sb-hide-collapsed');
-		sleepBtn.type = 'button';
-		sleepBtn.title = '休眠后台非固定标签（释放内存）';
-		sleepBtn.append(createSvgIcon(this.doc, 'sleep', 13));
-		sleepBtn.onclick = () => { this.actions.sleepInactiveTabs(); this.onRefresh(); };
-
-		const collapseBtn = this.h('button', 'ztf-sb-icon-btn');
-		collapseBtn.type = 'button';
-		collapseBtn.append(createSvgIcon(this.doc, 'sidebar', 14));
-		collapseBtn.title = '折叠/展开侧边栏';
-		collapseBtn.onclick = () => {
-			setPref('verticalSidebarCollapsed', !getPref('verticalSidebarCollapsed'));
-			this.render();
+		const mkBtn = (icon: Parameters<typeof createSvgIcon>[1], size: number, tip: string, fn: () => void, cls = 'ztf-sb-icon-btn ztf-sb-hide-collapsed') => {
+			const b = this.h('button', cls);
+			b.type = 'button';
+			b.title = tip;
+			b.append(createSvgIcon(this.doc, icon, size));
+			b.onclick = fn;
+			return b;
 		};
-		headerActions.append(autoBtn, sleepBtn, collapseBtn);
+		const headerActions = this.h('div', 'ztf-sb-header-actions');
+		headerActions.append(
+			mkBtn('plus', 13, t('zotero-tabflow-sidebar-new-group', '新建分组'), () => {
+				const input = { value: '' };
+				if (!Services.prompt.prompt(null, t('zotero-tabflow-new-group-title', '新建标签分组'), t('zotero-tabflow-new-group-prompt', '请输入新分组名称：'), input, null, {})) return;
+				this.store.ensureGroup(input.value);
+				this.viewMode = 'groups';
+				this.onRefresh();
+			}),
+			mkBtn('folder', 13, t('zotero-tabflow-auto-group-tip', '按 Zotero 集合自动归组'), () => {
+				this.actions.autoGroupByCollection();
+				this.onRefresh();
+			}),
+			mkBtn('sleep', 13, t('zotero-tabflow-sleep-inactive-tip', '休眠后台非固定标签（释放内存）'), () => {
+				this.actions.sleepInactiveTabs();
+				this.onRefresh();
+			}),
+			mkBtn('sidebar', 14, t('zotero-tabflow-sidebar-toggle-tip', '折叠/展开侧边栏'), () => {
+				setPref('verticalSidebarCollapsed', !getPref('verticalSidebarCollapsed'));
+				this.render();
+			}, 'ztf-sb-icon-btn'),
+		);
 		header.append(title, headerActions);
 
 		const searchWrap = this.h('div', 'ztf-sb-search-wrap ztf-sb-hide-collapsed');
 		const search = this.h('input', 'ztf-sb-search');
 		search.type = 'search';
-		search.placeholder = '过滤标题、备注、集合…';
+		search.placeholder = t('zotero-tabflow-sidebar-search-placeholder', '过滤标题、备注、集合…');
 		search.oninput = () => this.renderList();
 		searchWrap.append(search);
 
 		const views = this.h('div', 'ztf-sb-views ztf-sb-hide-collapsed');
 		for (const [mode, label] of [
-			['groups', '分组'],
-			['collection', '集合'],
-			['recent', '状态'],
+			['groups', t('zotero-tabflow-sidebar-view-groups', '分组')],
+			['collection', t('zotero-tabflow-sidebar-view-collection', '集合')],
+			['recent', t('zotero-tabflow-sidebar-view-status', '状态')],
 		] as const) {
 			const btn = this.h('button', `ztf-sb-view-btn${this.viewMode === mode ? ' active' : ''}`);
 			btn.type = 'button';
@@ -102,16 +117,23 @@ export class VerticalSidebarController {
 		}
 
 		const list = this.h('div', 'ztf-sb-list ztf-sb-hide-collapsed');
+		const statusBar = this.h('div', 'ztf-sb-status-bar ztf-sb-hide-collapsed');
 		const resizer = this.h('div', 'ztf-sb-resizer ztf-sb-hide-collapsed');
 		this.bindResizer(resizer, aside);
 
-		aside.append(header, searchWrap, views, list, resizer);
-		this.selection = new SidebarSelection(this.doc, this.store, headerActions, aside, list, () => this.renderList());
+		aside.append(header, searchWrap, views, list, statusBar, resizer);
+		this.selection = new SidebarSelection(
+			this.doc, this.store, headerActions, aside, list,
+			() => this.renderList(),
+			(ids) => void this.actions.closeTabs(ids, { preserveVirtual: true, protectPinned: true }).then(this.onRefresh),
+		);
+		bindSidebarKeyboardNavigation(aside, list, search, () => { search.value = ''; this.renderList(); });
 		deckParent.insertBefore(aside, deck);
 		this.hoverCard.mount();
 
 		this.sidebar = aside;
 		this.listEl = list;
+		this.statusEl = statusBar;
 		this.searchInput = search;
 	}
 
@@ -159,24 +181,29 @@ export class VerticalSidebarController {
 
 	private renderList(): void {
 		if (!this.listEl) return;
+		const focusAnchor = captureSidebarFocusAnchor(this.doc, this.sidebar);
 		const q = (this.searchInput?.value || '').trim().toLowerCase();
 		const selectedID = this.meta.getSelectedTabID();
 		const tracked = this.meta.buildTrackedTabs();
 		this.selection?.beginRender(tracked);
-		const allTracked = tracked.filter((t) => {
-			if (!q) return true;
-			const r = this.store.getRemark(t.key).note;
-			return `${t.title} ${t.shortTitle} ${t.filename} ${t.collection} ${r}`.toLowerCase().includes(q);
-		});
+		if (this.statusEl) {
+			renderSidebarStatusBar(this.doc, this.statusEl, computeWorkspaceStatusCounts(tracked, this.store), () => {
+				this.actions.sleepInactiveTabs();
+				this.onRefresh();
+			});
+		}
+		const allTracked = tracked.filter((t) => !q || `${t.title} ${t.shortTitle} ${t.filename} ${t.collection} ${this.store.getRemark(t.key).note}`.toLowerCase().includes(q));
+		const virtualList = getPref('enableVirtualMembers') ? Object.values(this.store.state.virtualMembers) : [];
+		const matchingVirtuals = virtualList.filter((m) => !q || `${m.title} ${m.shortTitle} ${m.collection}`.toLowerCase().includes(q));
+		let renderedGroupsCount = 1;
 
 		if (this.viewMode === 'groups') {
 			if (!this.groupSections.size) this.listEl.replaceChildren();
 			const groups = this.store.orderedGroups();
+			renderedGroupsCount = groups.length;
 			for (const g of groups) {
 				const members = allTracked.filter((t) => t.groupId === g.id);
-				const virtuals = getPref('enableVirtualMembers')
-					? Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === g.id)
-					: [];
+				const virtuals = matchingVirtuals.filter((m) => this.store.groupOfKey(m.key) === g.id);
 				const collapsed = this.store.state.collapsed.includes(g.id);
 				const section = this.getGroupSection(g.id);
 				section.element.style.setProperty('--ztf-group-dot', g.color);
@@ -184,54 +211,73 @@ export class VerticalSidebarController {
 				section.heading.oncontextmenu = (e: Event) => this.menus.openGroupMenu(e as MouseEvent, g);
 				if (!collapsed) {
 					const body = this.doc.createDocumentFragment();
-					for (const t of members) body.append(this.buildRow(t, selectedID));
-					for (const v of virtuals) {
-						const row = this.h('div', 'ztf-sb-row virtual');
-						const ic = this.h('span', 'ztf-sb-row-icon');
-						ic.append(createSvgIcon(this.doc, 'virtual', 13));
-						const txt = this.h('div', 'ztf-sb-row-text');
-						const ttl = this.h('div', 'ztf-sb-row-title');
-						ttl.textContent = this.meta.getDisplayTitle(v);
-						txt.append(ttl);
-						row.append(ic, txt);
-						row.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id).then(this.onRefresh);
-						row.oncontextmenu = (e: Event) => this.menus.openVirtualMenu(e as MouseEvent, v, g.id);
-						body.append(row);
-					}
+					for (const t of members) body.append(buildSidebarTabRow(this.rowDeps(), t, selectedID));
+					for (const v of virtuals) body.append(buildSidebarVirtualRow(this.rowDeps(), v, g.id));
 					section.body.replaceChildren(body);
 				}
 			}
 			reconcileGroupSections(this.listEl, this.groupSections, groups.map((g) => g.id));
-			this.selection?.updateControls();
-			return;
-		}
-
-		this.clearGroupSections();
-		this.listEl.replaceChildren();
-		if (this.viewMode === 'collection') {
-			const cols = [...new Set(allTracked.map((t) => t.collection))];
-			cols.forEach((col, i) => {
-				const items = allTracked.filter((t) => t.collection === col);
+		} else {
+			this.clearGroupSections();
+			this.listEl.replaceChildren();
+			if (this.viewMode === 'collection') {
 				const colors = ['#3977d5', '#21866a', '#8b5ac7', '#dc8225'];
-				const sec = this.buildSection(col, colors[i % colors.length], items.length);
-				const body = sec.querySelector('.ztf-sb-group-body')!;
-				for (const t of items) body.append(this.buildRow(t, selectedID));
-				this.listEl!.append(sec);
-			});
-			this.selection?.updateControls();
-			return;
+				[...new Set(allTracked.map((t) => t.collection))].forEach((col, i) => {
+					const items = allTracked.filter((t) => t.collection === col);
+					const sec = this.buildSection(`col:${col}`, col, colors[i % colors.length], items.length);
+					const body = sec.querySelector('.ztf-sb-group-body')!;
+					for (const item of items) body.append(buildSidebarTabRow(this.rowDeps(), item, selectedID));
+					this.listEl!.append(sec);
+				});
+			} else if (allTracked.length) {
+				for (const [id, label, color, items] of [
+					['status:active', t('zotero-tabflow-sidebar-status-active', '已加载阅读器'), '#16a34a', allTracked.filter((x) => x.status === 'active')],
+					['status:sleeping', t('zotero-tabflow-sidebar-status-sleeping', '已休眠省内存'), '#d97706', allTracked.filter((x) => x.status === 'sleeping')],
+				] as const) {
+					const sec = this.buildSection(id, label, color, items.length);
+					const body = sec.querySelector('.ztf-sb-group-body')!;
+					for (const item of items) body.append(buildSidebarTabRow(this.rowDeps(), item, selectedID));
+					this.listEl.append(sec);
+				}
+			}
 		}
 
-		for (const [label, color, items] of [
-			['已加载阅读器', '#16a34a', allTracked.filter((t) => t.status === 'active')],
-			['已休眠省内存', '#d97706', allTracked.filter((t) => t.status === 'sleeping')],
-		] as const) {
-			const sec = this.buildSection(label, color, items.length);
-			const body = sec.querySelector('.ztf-sb-group-body')!;
-			for (const t of items) body.append(this.buildRow(t, selectedID));
-			this.listEl.append(sec);
+		const noMatches = Boolean(q) && !allTracked.length && (!matchingVirtuals.length || this.viewMode !== 'groups');
+		const noNonGroupRows = this.viewMode !== 'groups' && !allTracked.length;
+		const brandNewEmpty = !q && this.viewMode === 'groups' && !allTracked.length && !virtualList.length && renderedGroupsCount <= 1;
+		if (noMatches || noNonGroupRows || brandNewEmpty) {
+			this.clearGroupSections();
+			this.listEl.replaceChildren();
+			renderSidebarEmptyState(
+				this.doc,
+				this.listEl,
+				Boolean(q),
+				Boolean(this.store.state.sessions.length || this.store.state.rollingSessions?.length),
+				() => { if (this.searchInput) { this.searchInput.value = ''; this.renderList(); } },
+				() => this.onRestoreLastSession?.(),
+				() => {
+					const lib = (this.win as any).Zotero_Tabs?._tabs?.find((x: { type: string }) => x.type === 'library');
+					if (lib) (this.win as any).Zotero_Tabs?.select?.(lib.id);
+				},
+			);
 		}
 		this.selection?.updateControls();
+		restoreSidebarFocusAnchor(this.listEl, focusAnchor);
+	}
+
+	private rowDeps(): SidebarRowDeps {
+		return {
+			doc: this.doc,
+			store: this.store,
+			meta: this.meta,
+			actions: this.actions,
+			menus: this.menus,
+			hoverCard: this.hoverCard,
+			selection: this.selection,
+			onRefresh: this.onRefresh,
+			getDraggedKey: () => this.draggedKey,
+			setDraggedKey: (key) => { this.draggedKey = key; },
+		};
 	}
 
 	private getGroupSection(id: string): GroupSection {
@@ -243,6 +289,8 @@ export class VerticalSidebarController {
 			body: 'ztf-sb-group-body',
 		}, (closed) => this.store.setCollapsed(id, closed),
 		(name) => this.store.renameGroup(id, name));
+		section.heading.dataset.ztfNav = 'head';
+		section.heading.dataset.ztfNavId = id;
 		section.heading.prepend(this.h('span', 'ztf-sb-dot'));
 		section.heading.ondragover = (e: Event) => { if (this.draggedKey) e.preventDefault(); };
 		section.heading.ondrop = (e: Event) => {
@@ -261,68 +309,31 @@ export class VerticalSidebarController {
 		this.groupSections.clear();
 	}
 
-	private buildSection(title: string, color: string, count: number): HTMLElement {
+	private buildSection(id: string, title: string, color: string, count: number): HTMLElement {
+		const collapsed = this.collapsedSections.has(id);
 		const wrap = this.h('div', 'ztf-sb-group');
-		const head = this.h('div', 'ztf-sb-group-head');
+		const head = this.h('button', 'ztf-sb-group-head');
+		head.type = 'button';
+		head.dataset.ztfNav = 'head';
+		head.dataset.ztfNavId = id;
+		const arrow = this.h('span', 'ztf-sb-caret');
+		arrow.textContent = collapsed ? '▸' : '▾';
 		const dot = this.h('span', 'ztf-sb-dot');
 		dot.style.background = color;
-		const txt = this.h('span');
+		const txt = this.h('span', 'ztf-sb-group-title');
 		txt.textContent = `${title} (${count})`;
-		head.append(dot, txt);
-		wrap.append(head, this.h('div', 'ztf-sb-group-body'));
+		const body = this.h('div', 'ztf-sb-group-body');
+		body.hidden = collapsed;
+		head.onclick = () => {
+			const next = !this.collapsedSections.has(id);
+			if (next) this.collapsedSections.add(id);
+			else this.collapsedSections.delete(id);
+			arrow.textContent = next ? '▸' : '▾';
+			body.hidden = next;
+		};
+		head.append(arrow, dot, txt);
+		wrap.append(head, body);
 		return wrap;
-	}
-
-	private buildRow(t: TrackedTab, selectedID: string): HTMLElement {
-		const row = this.h('div', `ztf-sb-row${t.tab.id === selectedID ? ' selected' : ''}${t.status === 'sleeping' ? ' sleeping' : ''}`);
-		row.draggable = true;
-		const iconName: IconName = t.pinned ? 'pin' : t.status === 'sleeping' ? 'sleep' : t.tab.type === 'note' ? 'note' : 'pdf';
-		const iconWrap = this.h('span', 'ztf-sb-row-icon');
-		iconWrap.append(createSvgIcon(this.doc, iconName, 13));
-
-		const textWrap = this.h('div', 'ztf-sb-row-text');
-		const title = this.h('div', 'ztf-sb-row-title');
-		title.textContent = this.meta.getDisplayTitle(t);
-		textWrap.append(title);
-
-		const sub = this.meta.getDisplaySubtitle(t);
-		if (sub) {
-			const subEl = this.h('div', 'ztf-sb-row-sub');
-			subEl.textContent = sub;
-			textWrap.append(subEl);
-		}
-		row.append(iconWrap, textWrap);
-		const folderBtn = this.h('button', 'ztf-sb-row-action');
-		folderBtn.type = 'button';
-		folderBtn.title = '打开 PDF 附件所在文件夹';
-		folderBtn.append(createSvgIcon(this.doc, 'folder', 12));
-		folderBtn.onclick = (e: Event) => {
-			e.stopPropagation();
-			void this.actions.showInFilesystem(t.tab.id);
-		};
-		row.append(folderBtn);
-		this.selection?.addCheckbox(row, t);
-		row.onclick = () => this.actions.selectTab(t.tab.id);
-		row.oncontextmenu = (e: Event) => this.menus.openTabMenu(e as MouseEvent, t);
-		row.onmouseenter = () => this.hoverCard.show(row, t);
-		row.onmouseleave = () => this.hoverCard.hide();
-		row.ondragstart = () => { this.draggedKey = t.key; };
-		row.ondragover = (e: Event) => {
-			if (!this.draggedKey || this.draggedKey === t.key) return;
-			e.preventDefault();
-			row.setAttribute('data-ztf-drop', 'join');
-		};
-		row.ondragleave = () => row.removeAttribute('data-ztf-drop');
-		row.ondrop = (e: Event) => {
-			e.preventDefault();
-			row.removeAttribute('data-ztf-drop');
-			if (!this.draggedKey || this.draggedKey === t.key) return;
-			this.store.assignKey(this.draggedKey, t.groupId);
-			this.draggedKey = null;
-			this.onRefresh();
-		};
-		row.ondragend = () => { this.draggedKey = null; };
-		return row;
 	}
 
 	dispose(): void {
@@ -331,6 +342,7 @@ export class VerticalSidebarController {
 		this.sidebar?.remove();
 		this.sidebar = null;
 		this.listEl = null;
+		this.statusEl = null;
 		this.selection = null;
 		this.searchInput = null;
 	}

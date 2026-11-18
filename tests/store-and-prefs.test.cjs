@@ -142,3 +142,68 @@ test('ItemMetadataService formats remark display modes', () => {
 	store.setDisplayMode('1:A', 'original');
 	assert.equal(meta.getDisplayTitle({ key: '1:A', title: 'Attention', shortTitle: 'Attn', filename: 'a.pdf' }), 'Attention');
 });
+
+
+test('TabFlowStore.ensureGroup falls back on whitespace name and session preserves remarks and ungrouped styling', () => {
+	memPrefs.clear();
+	const store = new TabFlowStore();
+	const emptyGroup = store.ensureGroup('   ');
+	assert.equal(emptyGroup.name, '新分组');
+
+	store.renameGroup('', '待整理');
+	store.setGroupColor('', '#123456');
+	store.setRemark('1:REM', '重点方法', 'note');
+	const snap = store.saveSession('完整快照', ['1:REM']);
+	assert.equal(snap.ungroupedName, '待整理');
+	assert.equal(snap.ungroupedColor, '#123456');
+	assert.deepEqual(snap.remarks?.['1:REM'], { note: '重点方法', mode: 'note' });
+
+	store.renameGroup('', '临时名');
+	store.setGroupColor('', '#abcdef');
+	store.setRemark('1:REM', '');
+	store.restoreSessionLayout(snap, false);
+	assert.equal(store.state.ungroupedName, '待整理');
+	assert.equal(store.state.ungroupedColor, '#123456');
+	assert.deepEqual(store.getRemark('1:REM'), { note: '重点方法', mode: 'note' });
+});
+
+test('ActivityTrackerService.getIdleTabsForSleep respects autoSleepMinutes, pin, selection, and sleep state', () => {
+	memPrefs.clear();
+	const store = new TabFlowStore();
+	const now = 1_700_000_000_000;
+	const min = 60_000;
+	store.state.history['1:IDLE'] = { firstSeen: now - 40 * min, lastViewed: now - 35 * min };
+	store.state.history['1:RECENT'] = { firstSeen: now - 10 * min, lastViewed: now - 5 * min };
+	store.state.history['1:PIN'] = { firstSeen: now - 60 * min, lastViewed: now - 60 * min };
+	store.state.history['1:CUR'] = { firstSeen: now - 60 * min, lastViewed: now - 60 * min };
+	store.state.history['1:SLEEP'] = { firstSeen: now - 60 * min, lastViewed: now - 60 * min };
+	store.togglePinned('1:PIN');
+	store.setSleeping('1:SLEEP', true);
+
+	const fakeWin = {
+		Zotero_Tabs: {
+			selectedID: 'tab-cur',
+			_tabs: [
+				{ id: 'tab-idle', type: 'reader', title: 'Idle', data: { itemID: 1 } },
+				{ id: 'tab-recent', type: 'reader', title: 'Recent', data: { itemID: 2 } },
+				{ id: 'tab-pin', type: 'reader', title: 'Pin', data: { itemID: 3 } },
+				{ id: 'tab-cur', type: 'reader', title: 'Cur', data: { itemID: 4 } },
+				{ id: 'tab-sleep', type: 'reader', title: 'Sleep', data: { itemID: 5 } },
+			],
+		},
+	};
+	globalThis.Zotero.Items = {
+		get(id) {
+			return { id, libraryID: 1, key: ['?', 'IDLE', 'RECENT', 'PIN', 'CUR', 'SLEEP'][id], getField: () => 'Paper' };
+		},
+	};
+	const meta = new ItemMetadataService(fakeWin, store);
+	const tracker = new ActivityTrackerService(store, meta);
+
+	assert.equal(tracker.getIdleTabsForSleep(now).length, 0);
+	setPref('autoSleepMinutes', 30);
+	const due = tracker.getIdleTabsForSleep(now);
+	assert.deepEqual(due.map((t) => t.key), ['1:IDLE']);
+	setPref('enableTabSleep', false);
+	assert.equal(tracker.getIdleTabsForSleep(now).length, 0);
+});

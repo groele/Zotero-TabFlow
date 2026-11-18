@@ -1,6 +1,11 @@
+import { t } from '../core/i18n.ts';
 import { getPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { NativeTabLike, TrackedTab } from '../core/types.ts';
+
+export function uncategorizedCollectionLabel(): string {
+	return t('zotero-tabflow-uncategorized-collection', '未分类集合');
+}
 
 export class ItemMetadataService {
 	private readonly win: Window;
@@ -35,10 +40,11 @@ export class ItemMetadataService {
 	}
 
 	resolveCollectionName(item: any): string {
-		if (!item) return '未分类集合';
+		const uncategorized = uncategorizedCollectionLabel();
+		if (!item) return uncategorized;
 		const primary = item.parentItemID ? Zotero.Items.get(item.parentItemID) || item : item;
 		const collectionIDs: number[] = primary.getCollections?.() || [];
-		if (!collectionIDs.length) return '未分类集合';
+		if (!collectionIDs.length) return uncategorized;
 
 		const strategy = getPref('multiCollectionStrategy');
 		if (strategy === 'active') {
@@ -46,7 +52,7 @@ export class ItemMetadataService {
 				(collection: { id: number }) => collectionIDs.includes(collection.id),
 			);
 			if (activeCol) {
-				return String(activeCol.name || '未分类集合');
+				return String(activeCol.name || uncategorized);
 			}
 		}
 		if (strategy === 'existing') {
@@ -58,7 +64,7 @@ export class ItemMetadataService {
 			}
 		}
 		const first = Zotero.Collections.get(collectionIDs[0]);
-		return first ? String(first.name) : '未分类集合';
+		return first ? String(first.name) : uncategorized;
 	}
 
 	plainTitle(value: string): string {
@@ -76,7 +82,7 @@ export class ItemMetadataService {
 				const itemID = typeof tab.data?.itemID === 'number' ? tab.data.itemID : null;
 				const rawItem: any = itemID ? Zotero.Items.get(itemID) : null;
 				const primary = this.resolvePrimaryItem(itemID);
-				const title = this.plainTitle(String(primary?.getField?.('title') || tab.title || '无标题'));
+				const title = this.plainTitle(String(primary?.getField?.('title') || tab.title || t('zotero-tabflow-untitled', '无标题')));
 				const shortTitle = this.plainTitle(String(primary?.getField?.('shortTitle') || title));
 				const filename = String(rawItem?.isAttachment?.() ? rawItem.attachmentFilename || title : title);
 				const source = String(
@@ -91,7 +97,9 @@ export class ItemMetadataService {
 				const year = String(primary?.getField?.('year') || '').slice(0, 4);
 				const creatorYear = [firstAuthor, year].filter(Boolean).join(', ');
 				const collection = this.resolveCollectionName(primary);
-				const sleeping = enableSleep && this.store.isSleeping(key);
+				const reader = (Zotero.Reader as any)?.getByTabID?.(tab.id);
+				const hostLoaded = Boolean(reader && reader.initialized !== false && !(tab.data as any)?.unloaded);
+				const sleeping = enableSleep && this.store.isSleeping(key) && !hostLoaded;
 				return {
 					tab,
 					key,
@@ -119,11 +127,22 @@ export class ItemMetadataService {
 		return r.mode === 'note' ? r.note : `${r.note} · ${base}`;
 	}
 
-	getDisplaySubtitle(t: { source: string; creatorYear: string; collection: string }): string {
+	getDisplaySubtitle(tabInfo: { key?: string; source: string; creatorYear: string; collection: string }): string {
 		const mode = getPref('verticalTabSubtitleMode');
 		if (mode === 'none') return '';
-		if (mode === 'creatorYear') return t.creatorYear;
-		if (mode === 'collection') return t.collection;
-		return t.source;
+		if (mode === 'creatorYear') return tabInfo.creatorYear;
+		if (mode === 'collection') return tabInfo.collection;
+		if (mode === 'lastViewed' && tabInfo.key) {
+			const h = this.store.state.history[tabInfo.key];
+			const ts = h?.lastViewed ?? h?.firstSeen;
+			if (!ts) return '';
+			const mins = Math.max(0, Math.floor((Date.now() - ts) / 60_000));
+			if (mins < 60) return mins < 2 ? t('zotero-tabflow-time-just-now', '刚刚') : t('zotero-tabflow-time-mins', `${mins} 分钟前`, { count: mins });
+			const hours = Math.floor(mins / 60);
+			if (hours < 24) return t('zotero-tabflow-time-hours', `${hours} 小时前`, { count: hours });
+			const days = Math.floor(hours / 24);
+			return t('zotero-tabflow-time-days', `${days} 天前`, { count: days });
+		}
+		return tabInfo.source;
 	}
 }

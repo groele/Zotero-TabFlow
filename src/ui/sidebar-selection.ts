@@ -12,6 +12,7 @@ export class SidebarSelection {
 	private selectAll: HTMLButtonElement;
 	private groups: HTMLSelectElement;
 	private pinButtons: HTMLButtonElement[];
+	private closeButton: HTMLButtonElement;
 
 	constructor(
 		private readonly doc: Document,
@@ -20,6 +21,7 @@ export class SidebarSelection {
 		aside: HTMLElement,
 		private readonly list: HTMLElement,
 		private readonly onChange: () => void,
+		private readonly onCloseSelected?: (tabIds: string[]) => void,
 	) {
 		this.toggle = this.button('zotero-tabflow-batch-toggle', () => {
 			this.active = !this.active;
@@ -48,7 +50,12 @@ export class SidebarSelection {
 			pinned ? 'zotero-tabflow-batch-pin' : 'zotero-tabflow-batch-unpin',
 			() => this.store.setPinnedKeys(this.selectedKeys(), pinned),
 		));
-		this.controls.append(this.count, this.selectAll, this.groups, ...this.pinButtons);
+		this.closeButton = this.button('zotero-tabflow-batch-close', () => {
+			const ids = [...this.selected];
+			this.selected.clear();
+			this.onCloseSelected?.(ids);
+		});
+		this.controls.append(this.count, this.selectAll, this.groups, ...this.pinButtons, this.closeButton);
 		aside.insertBefore(this.controls, list);
 	}
 
@@ -106,6 +113,8 @@ export class SidebarSelection {
 			btn.hidden = !getPref('enablePinnedTabs');
 			btn.disabled = !count;
 		}
+		this.closeButton.hidden = !this.onCloseSelected;
+		this.closeButton.disabled = !count;
 	}
 
 	private selectedKeys(): string[] {

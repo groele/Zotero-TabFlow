@@ -9,9 +9,11 @@ export const PREF_PREFIX = 'extensions.zotero.tabflow.';
 
 export interface TabFlowPrefs {
 	enableHorizontalGroups: boolean;
+	compactTopBar: boolean;
 	enableVerticalSidebar: boolean;
 	enableBatchSelection: boolean;
 	enablePinnedTabs: boolean;
+	pinnedIconOnly: boolean;
 	enableVirtualMembers: boolean;
 	enableCollectionAutoGroup: boolean;
 	multiCollectionStrategy: MultiCollectionStrategy;
@@ -26,7 +28,10 @@ export interface TabFlowPrefs {
 	enableHoverPreview: boolean;
 	enableSpotlight: boolean;
 	enableSessions: boolean;
+	enableRollingSnapshots: boolean;
 	enableTabSleep: boolean;
+	autoSleepMinutes: number;
+	activeReaderBudget: number;
 	enableStaleSuggestions: boolean;
 	staleSuggestDays: number;
 	enableTabContextMenu: boolean;
@@ -40,9 +45,11 @@ export interface TabFlowPrefs {
 
 export const DEFAULT_PREFS: TabFlowPrefs = {
 	enableHorizontalGroups: true,
+	compactTopBar: false,
 	enableVerticalSidebar: true,
 	enableBatchSelection: true,
 	enablePinnedTabs: true,
+	pinnedIconOnly: false,
 	enableVirtualMembers: true,
 	enableCollectionAutoGroup: false,
 	multiCollectionStrategy: 'active',
@@ -57,7 +64,10 @@ export const DEFAULT_PREFS: TabFlowPrefs = {
 	enableHoverPreview: true,
 	enableSpotlight: true,
 	enableSessions: true,
+	enableRollingSnapshots: true,
 	enableTabSleep: true,
+	autoSleepMinutes: 0,
+	activeReaderBudget: 0,
 	enableStaleSuggestions: true,
 	staleSuggestDays: 7,
 	enableTabContextMenu: true,

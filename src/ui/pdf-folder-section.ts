@@ -1,4 +1,10 @@
+import { t } from '../core/i18n.ts';
 import { getPref } from '../core/prefs.ts';
+import {
+	openAttachmentFolder as launchItemAttachmentFolder,
+	resetFolderLaunchCache,
+	resolveFileAttachment,
+} from '../services/attachment-folder.ts';
 
 interface SectionState {
 	body: HTMLElement;
@@ -9,7 +15,6 @@ interface SectionState {
 
 type SectionUpdate = { body: HTMLElement; item: any; setEnabled: (enabled: boolean) => void };
 type ItemPaneSidenav = Element & { container?: { item?: any } };
-const FOLDER_CLICK_INTERVAL_MS = 500;
 const FOLDER_ICON = 'item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"]';
 const FOLDER_ACTION = `${FOLDER_ICON}, button.ztf-pdf-folder-action`;
 
@@ -24,7 +29,6 @@ export class PdfFolderSectionController {
 	private states = new Map<HTMLElement, SectionState>();
 	private listeners = new Map<Document, AbortController>();
 	private openingFolders = new WeakSet<Window>();
-	private recentFolder: { path: string; openedAt: number } | null = null;
 
 	register(pluginID: string, rootURI: string): void {
 		if (this.sectionID || !Zotero.ItemPaneManager?.registerSection) return;
@@ -115,13 +119,6 @@ export class PdfFolderSectionController {
 		void this.updateBody(state);
 	}
 
-	private async resolveFileAttachment(item: any): Promise<any | null> {
-		if (!item) return null;
-		if (item.isFileAttachment?.()) return item;
-		const best = await item.getBestAttachment?.();
-		return best?.isFileAttachment?.() ? best : null;
-	}
-
 	private async updateBody(st: SectionState): Promise<void> {
 		const item = st.item;
 		st.btn.disabled = true;
@@ -130,13 +127,13 @@ export class PdfFolderSectionController {
 		st.meta.removeAttribute('title');
 		st.meta.removeAttribute('data-l10n-id');
 		if (!item) return;
-		const att = await this.resolveFileAttachment(item).catch(() => null);
+		const att = await resolveFileAttachment(item).catch(() => null);
 		if (this.states.get(st.body) !== st || st.item !== item) return;
 		if (!att) {
 			st.meta.setAttribute('data-l10n-id', 'zotero-tabflow-pdf-folder-unavailable');
 			return;
 		}
-		st.meta.textContent = String(att.attachmentFilename || att.getField?.('title') || '附件文件');
+		st.meta.textContent = String(att.attachmentFilename || att.getField?.('title') || t('zotero-tabflow-attachment-fallback', '附件文件'));
 		st.meta.title = st.meta.textContent;
 		st.btn.disabled = false;
 		st.btn.style.opacity = '1';
@@ -146,25 +143,14 @@ export class PdfFolderSectionController {
 		if (signal.aborted || this.openingFolders.has(win)) return;
 		this.openingFolders.add(win);
 		try {
-			const att = await this.resolveFileAttachment(item);
-			if (signal.aborted || !att) return;
-			const filePath = await att.getFilePathAsync?.();
-			if (signal.aborted || !filePath) return;
-			const folder = Zotero.File.pathToFile(filePath).parent?.path;
-			if (!folder) return;
-			const now = Date.now();
-			if (this.recentFolder?.path === folder && now - this.recentFolder.openedAt < FOLDER_CLICK_INTERVAL_MS) return;
-			Zotero.launchFile(folder);
-			this.recentFolder = { path: folder, openedAt: now };
-		} catch (error) {
-			Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+			await launchItemAttachmentFolder(item, win);
 		} finally {
 			this.openingFolders.delete(win);
 		}
 	}
 
 	unregister(): void {
-		this.recentFolder = null;
+		resetFolderLaunchCache();
 		for (const controller of this.listeners.values()) controller.abort();
 		this.listeners.clear();
 		if (this.sectionID) {
