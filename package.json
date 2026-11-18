@@ -1,6 +1,6 @@
 {
   "name": "zotero-tabflow",
-  "version": "17.3.0",
+  "version": "17.3.1",
   "description": "Unified horizontal & vertical tab grouping, pinned tabs, tab sleep, remarks, sessions, collection auto-grouping, and Spotlight search for Zotero 10-12.",
   "private": true,
   "license": "AGPL-3.0-or-later",

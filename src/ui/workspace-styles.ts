@@ -128,15 +128,26 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 }
 
 /* Native Flat Toolbar Action Buttons */
-#ztf-toolbar-actions { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; margin-inline: 4px 6px; }
-.ztf-tb-btn {
-  display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px;
-  border: 1px solid transparent; background: transparent; color: var(--ztf-text);
-  border-radius: 6px; font: 12px system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+#ztf-toolbar-actions {
+  display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto;
+  margin-inline: 6px 8px; padding-inline-start: 7px;
+  border-inline-start: 1px solid var(--ztf-border);
 }
-.ztf-tb-btn:hover { background: var(--ztf-hover); border-color: var(--ztf-border); }
-.ztf-tb-btn.active { background: var(--ztf-accent-soft); color: var(--ztf-accent); border-color: color-mix(in srgb, var(--ztf-accent) 35%, transparent); }
+.ztf-tb-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-height: 28px; padding: 0 8px;
+  border: 1px solid transparent; background: transparent; color: var(--ztf-text);
+  border-radius: 3px; font: 12px system-ui, "Microsoft YaHei UI", sans-serif;
+  cursor: pointer; white-space: nowrap; transition: background-color 100ms ease, border-color 100ms ease, color 100ms ease;
+}
+.ztf-tb-btn > svg { width: 13px; height: 13px; flex: 0 0 13px; opacity: .78; }
+.ztf-tb-btn:hover { background: color-mix(in srgb, var(--ztf-text) 5%, transparent); border-color: color-mix(in srgb, var(--ztf-text) 12%, transparent); }
+.ztf-tb-btn:focus-visible { outline: 1px solid var(--ztf-text); outline-offset: 1px; }
+.ztf-tb-btn.active { background: transparent; border-color: transparent; color: var(--ztf-text); }
+.ztf-tb-btn.active::after { content: ""; position: absolute; inset-inline: 7px; bottom: -2px; height: 2px; border-radius: 1px; background: color-mix(in srgb, var(--ztf-text) 48%, transparent); }
+.ztf-tb-btn.active > svg { opacity: 1; }
 .ztf-tb-btn.warn { color: light-dark(#b91c1c, #f87171); }
+.ztf-tb-btn.warn > svg { opacity: 1; }
 
 /* Vertical Sidebar (Clean Native Zotero Sidepane Aesthetic; 0px when collapsed) */
 #ztf-sidebar {

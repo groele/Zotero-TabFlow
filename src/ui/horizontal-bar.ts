@@ -8,6 +8,7 @@ import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { HorizontalDragController } from './horizontal-drag.ts';
 import { GroupSection, reconcileGroupSections } from './group-section.ts';
+import { shouldRenderGroupHeading } from './group-visibility.ts';
 import { createSvgIcon } from './icons.ts';
 import { renderPinnedStrip } from './pinned-strip.ts';
 import type { PopoverController } from './popovers.ts';
@@ -124,10 +125,9 @@ export class HorizontalBarController {
 			? Object.values(this.store.state.virtualMembers).filter((member) => !openKeys.has(member.key))
 			: [];
 		const groups = rawGroups.filter((g) => {
-			if (g.id || rawGroups.length > 1 || this.store.state.ungroupedName) return true;
-			const hasMembers = unpinned.some((item) => !item.groupId);
-			const hasVirtuals = virtualMembers.some((member) => !this.store.groupOfKey(member.key));
-			return hasMembers || hasVirtuals;
+			const hasMembers = unpinned.some((item) => item.groupId === g.id);
+			const hasVirtuals = virtualMembers.some((member) => this.store.groupOfKey(member.key) === g.id);
+			return shouldRenderGroupHeading(g.id, hasMembers, hasVirtuals, Boolean(!g.id && this.store.state.ungroupedName));
 		});
 		for (const g of groups) {
 			let section = this.groupSections.get(g.id);

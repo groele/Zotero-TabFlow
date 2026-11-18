@@ -5,6 +5,7 @@ import type { SidebarViewMode } from '../core/types.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { GroupSection, reconcileGroupSections } from './group-section.ts';
+import { shouldRenderGroupHeading } from './group-visibility.ts';
 import { createSvgIcon } from './icons.ts';
 import { SidebarHoverCard } from './sidebar-hover.ts';
 import { bindSidebarKeyboardNavigation, captureSidebarFocusAnchor, restoreSidebarFocusAnchor } from './sidebar-keyboard.ts';
@@ -205,8 +206,13 @@ export class VerticalSidebarController {
 
 		if (this.viewMode === 'groups') {
 			if (!this.groupSections.size) this.listEl.replaceChildren();
-			renderedGroupsCount = groups.length;
-			for (const g of groups) {
+			const renderedGroups = groups.filter((g) => {
+				const hasOpenMembers = allTracked.some((tab) => tab.groupId === g.id);
+				const hasVirtualMembers = matchingVirtuals.some((member) => this.store.groupOfKey(member.key) === g.id);
+				return shouldRenderGroupHeading(g.id, hasOpenMembers, hasVirtualMembers, Boolean(!g.id && this.store.state.ungroupedName));
+			});
+			renderedGroupsCount = renderedGroups.length;
+			for (const g of renderedGroups) {
 				const members = allTracked.filter((t) => t.groupId === g.id);
 				const virtuals = matchingVirtuals.filter((m) => this.store.groupOfKey(m.key) === g.id);
 				const collapsed = this.store.state.collapsed.includes(g.id);
@@ -221,7 +227,7 @@ export class VerticalSidebarController {
 					section.body.replaceChildren(body);
 				}
 			}
-			reconcileGroupSections(this.listEl, this.groupSections, groups.map((g) => g.id));
+			reconcileGroupSections(this.listEl, this.groupSections, renderedGroups.map((g) => g.id));
 		} else {
 			this.clearGroupSections();
 			this.listEl.replaceChildren();

@@ -33,6 +33,15 @@ const {
 const { partitionPinnedOverflow } = require('../src/ui/pinned-strip.ts');
 const { computeNextNavIndex, isEditableKeyboardTarget } = require('../src/ui/sidebar-keyboard.ts');
 const { computeWorkspaceStatusCounts } = require('../src/ui/sidebar-status.ts');
+const { shouldRenderGroupHeading } = require('../src/ui/group-visibility.ts');
+
+test('empty default ungrouped heading stays hidden beside named groups', () => {
+	assert.equal(shouldRenderGroupHeading('', false, false, false), false);
+	assert.equal(shouldRenderGroupHeading('named-group', false, false, false), true);
+	assert.equal(shouldRenderGroupHeading('', true, false, false), true);
+	assert.equal(shouldRenderGroupHeading('', false, true, false), true);
+	assert.equal(shouldRenderGroupHeading('', false, false, true), true);
+});
 
 test('hidden project keeps assignments, virtual members and pins after reloading', () => {
 	memPrefs.clear();
