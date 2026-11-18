@@ -15,12 +15,14 @@ import {
 } from '../services/session-restore.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { SessionPreviewController } from './session-preview.ts';
+import { WorkspaceHubController } from './workspace-hub.ts';
 
 export class PopoverController {
 	private activePopups = new Set<Element>();
 	private restoring = false;
 	private disposed = false;
 	private preview: SessionPreviewController;
+	private hub: WorkspaceHubController;
 
 	constructor(
 		private readonly win: Window,
@@ -32,6 +34,13 @@ export class PopoverController {
 		private readonly onRefresh: () => void,
 	) {
 		this.preview = new SessionPreviewController(win, doc);
+		this.hub = new WorkspaceHubController(win, doc, store, meta, actions, {
+			onPreviewRestore: (s) => void this.previewAndRestoreSession(s),
+			onQuickMerge: (s) => void this.quickMergeSession(s),
+			onExportSessions: () => void this.exportSessions(),
+			onImportSessions: () => void this.importSessions(),
+			onRefresh,
+		});
 	}
 
 	private xul(tag: string): any {
@@ -80,8 +89,12 @@ export class PopoverController {
 				if (getPref('enableTabSleep')) {
 					this.item(subPop, t('zotero-tabflow-stale-sleep', '休眠以释放内存'), () => { this.actions.sleepTab(entry.tracked.tab.id); this.onRefresh(); });
 				}
-				this.item(subPop, t('zotero-tabflow-stale-close', '关闭标签页（保留在分组）'), () => {
-					void this.actions.closeTab(entry.tracked.tab.id, true).then(this.onRefresh);
+				const keepEntry = Boolean(entry.tracked.groupId) && getPref('enableVirtualMembers');
+				const closeLabel = keepEntry
+					? t('zotero-tabflow-stale-close', '关闭标签页（保留在分组）')
+					: t('zotero-tabflow-toolbar-close-tab', '关闭标签页');
+				this.item(subPop, closeLabel, () => {
+					void this.actions.closeTabs([entry.tracked.tab.id], { preserveVirtual: keepEntry, protectPinned: true, protectMedia: true }).then(this.onRefresh);
 				});
 			}
 			popup.append(this.xul('menuseparator'));
@@ -92,7 +105,7 @@ export class PopoverController {
 				}, !stale.length);
 			}
 			this.item(popup, t('zotero-tabflow-stale-close-all', '关闭以上建议的全部标签页'), () => {
-				void this.actions.closeTabs(stale.map((s) => s.tracked.tab.id), { preserveVirtual: true, protectPinned: true }).then(this.onRefresh);
+				void this.actions.closeTabs(stale.map((s) => s.tracked.tab.id), { preserveVirtual: true, protectPinned: true, protectMedia: true }).then(this.onRefresh);
 			}, !stale.length);
 			this.item(popup, t('zotero-tabflow-stale-threshold', `设置天数阈值…（当前 ${threshold} 天）`, { days: threshold }), () => {
 				const val = { value: String(threshold) };
@@ -104,73 +117,40 @@ export class PopoverController {
 		});
 	}
 
-	openHiddenGroupsMenu(anchor: Element): void {
-		const groups = this.store.hiddenGroups();
-		if (!groups.length) return;
-		this.openPopupMenu(anchor, (popup) => {
-			for (const group of groups) {
-				this.item(popup, t('zotero-tabflow-show-group', `恢复显示「${group.name}」`, { name: group.name }), () => {
-					this.store.setGroupHidden(group.id, false);
-				});
-			}
-		});
+	openWorkspaceHub(anchor?: HTMLElement): void {
+		if (!getPref('enableSessions') && !getPref('enableGroupHiding')) return;
+		this.hub.open(anchor);
 	}
 
-	openSessionsMenu(anchor: Element): void {
-		if (!getPref('enableSessions')) return;
-		this.openPopupMenu(anchor, (popup) => {
-			this.item(popup, t('zotero-tabflow-sessions-save', '保存当前工作区为会话…'), () => {
-				const val = { value: '' };
-				if (!Services.prompt.prompt(this.win, t('zotero-tabflow-sessions-save', '保存会话快照'), t('zotero-tabflow-sessions-save-prompt', '请输入会话名称：'), val, null, {})) return;
-				this.store.saveSession(val.value, this.meta.buildTrackedTabs().map((item) => item.key));
-				this.onRefresh();
-			});
-			this.item(popup, t('zotero-tabflow-sessions-save-template', '另存为纯布局模板（不含文献）…'), () => {
-				const val = { value: '' };
-				if (!Services.prompt.prompt(this.win, t('zotero-tabflow-sessions-save-template', '保存布局模板'), t('zotero-tabflow-sessions-save-prompt', '请输入模板名称：'), val, null, {})) return;
-				this.store.saveLayoutTemplate(val.value);
-				this.onRefresh();
-			});
-			this.item(popup, t('zotero-tabflow-sessions-export', '导出会话到 JSON 文件…'), () => void this.exportSessions(), !this.store.state.sessions.length);
-			this.item(popup, t('zotero-tabflow-sessions-import', '从 JSON 文件导入会话…'), () => void this.importSessions());
-			popup.append(this.xul('menuseparator'));
-
-			const sessions = this.store.state.sessions;
-			if (!sessions.length) {
-				this.item(popup, t('zotero-tabflow-sessions-empty', '暂无已保存的会话'), () => {}, true);
-			} else {
-				for (const s of sessions) this.appendSessionEntry(popup, s);
-			}
-
-			const rolling = this.store.state.rollingSessions ?? [];
-			if (rolling.length) {
-				popup.append(this.xul('menuseparator'));
-				this.item(popup, t('zotero-tabflow-rolling-header', '本地自动恢复快照'), () => {}, true);
-				for (const r of rolling) this.appendSessionEntry(popup, r);
-			}
-		});
-	}
-
-	private appendSessionEntry(popup: any, s: TabSessionSnapshot): void {
-		const sub = this.xul('menu');
-		const tag = s.kind === 'template' ? '📐 ' : s.kind === 'pre-replace' ? '↩ ' : s.kind === 'rolling' ? '🕒 ' : '';
-		sub.setAttribute('label', `${tag}${s.name} (${s.openKeys.length})`);
-		const subPop = this.xul('menupopup');
-		sub.append(subPop);
-		popup.append(sub);
-		this.item(subPop, t('zotero-tabflow-sessions-preview-restore', '预览差异并恢复…'), () => void this.previewAndRestoreSession(s), this.restoring);
-		this.item(subPop, t('zotero-tabflow-sessions-delete', '删除此会话'), () => { this.store.deleteSession(s.id); this.onRefresh(); });
-	}
+	openHiddenGroupsMenu(_anchor: Element): void { this.openWorkspaceHub(); }
+	openSessionsMenu(_anchor: Element): void { this.openWorkspaceHub(); }
 
 	async previewAndRestoreSession(session: TabSessionSnapshot): Promise<void> {
 		if (this.disposed || this.restoring) return;
-		const openKeys = this.meta.buildTrackedTabs().map((item) => item.key);
-		const [mergePlan, replacePlan] = await Promise.all([
-			buildSessionRestorePlan(this.store, openKeys, session, true),
-			buildSessionRestorePlan(this.store, openKeys, session, false),
-		]);
-		if (this.disposed) return;
-		this.preview.openRestorePreview(mergePlan, replacePlan, (chosen) => this.executePlan(chosen));
+		try {
+			const openKeys = this.meta.buildTrackedTabs().map((item) => item.key);
+			const [mergePlan, replacePlan] = await Promise.all([
+				buildSessionRestorePlan(this.store, openKeys, session, true),
+				buildSessionRestorePlan(this.store, openKeys, session, false),
+			]);
+			if (this.disposed) return;
+			this.preview.openRestorePreview(mergePlan, replacePlan, (chosen) => this.executePlan(chosen));
+		} catch (error) {
+			Zotero.logError(error as Error);
+			Services.prompt.alert(this.win, 'Zotero TabFlow', t('zotero-tabflow-session-restore-error', '加载会话预览失败，请查看 Zotero 错误控制台。'));
+		}
+	}
+
+	private async quickMergeSession(session: TabSessionSnapshot): Promise<void> {
+		if (this.disposed || this.restoring) return;
+		try {
+			const openKeys = this.meta.buildTrackedTabs().map((item) => item.key);
+			const mergePlan = await buildSessionRestorePlan(this.store, openKeys, session, true);
+			await this.executePlan(mergePlan);
+		} catch (error) {
+			Zotero.logError(error as Error);
+			Services.prompt.alert(this.win, 'Zotero TabFlow', t('zotero-tabflow-session-restore-error', '恢复会话失败，请查看 Zotero 错误控制台。'));
+		}
 	}
 
 	private async executePlan(plan: SessionRestorePlan): Promise<void> {
@@ -185,6 +165,9 @@ export class PopoverController {
 				openKeys,
 				() => this.disposed,
 			);
+		} catch (error) {
+			Zotero.logError(error as Error);
+			Services.prompt.alert(this.win, 'Zotero TabFlow', t('zotero-tabflow-session-restore-error', '恢复会话失败，请查看 Zotero 错误控制台。'));
 		} finally {
 			this.restoring = false;
 			if (!this.disposed) this.onRefresh();
@@ -240,6 +223,7 @@ export class PopoverController {
 
 	dispose(): void {
 		this.disposed = true;
+		this.hub.dispose();
 		this.preview.dispose();
 		for (const p of this.activePopups) { (p as any).hidePopup?.(); p.remove(); }
 		this.activePopups.clear();

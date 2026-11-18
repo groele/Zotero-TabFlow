@@ -7,17 +7,20 @@ import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { HorizontalDragController } from './horizontal-drag.ts';
 import { GroupSection, reconcileGroupSections } from './group-section.ts';
-import { shouldRenderGroupHeading } from './group-visibility.ts';
+import { indexGroupMembers, shouldRenderGroupHeading } from './group-visibility.ts';
 import { createSvgIcon } from './icons.ts';
 import { renderPinnedStrip } from './pinned-strip.ts';
 import type { PopoverController } from './popovers.ts';
 import type { SpotlightController } from './spotlight.ts';
 import type { TabContextMenuController } from './tab-context-menu.ts';
+import { ToolbarActions, type ToolbarAction } from './toolbar-actions.ts';
+import { computeWorkspaceHubCounts } from './workspace-hub.ts';
 
 export class HorizontalBarController {
 	private root: HTMLDivElement | null = null;
 	private pinnedStrip: HTMLDivElement | null = null;
 	private toolbarActions: HTMLDivElement | null = null;
+	private readonly toolbar = new ToolbarActions();
 	private drag: HorizontalDragController;
 	private lastSelectedID = '';
 	private groupSections = new Map<string, GroupSection>();
@@ -35,7 +38,18 @@ export class HorizontalBarController {
 		private readonly spotlight: SpotlightController,
 		private readonly onRefresh: () => void,
 	) {
-		this.drag = new HorizontalDragController(win, store, onRefresh);
+		this.drag = new HorizontalDragController(
+			win,
+			store,
+			onRefresh,
+			(draggedTabId, targetTabId, after) => this.actions.moveTabRelative(draggedTabId, targetTabId, after),
+			(itemIDs, groupId) => {
+				void (async () => {
+					for (const id of itemIDs) await this.actions.openVirtualOrItem(id, groupId);
+					this.onRefresh();
+				})();
+			},
+		);
 	}
 
 	private h<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
@@ -87,7 +101,7 @@ export class HorizontalBarController {
 		}, { passive: false });
 	}
 
-	render(): void {
+	render(snapshot?: readonly TrackedTab[]): void {
 		const host = this.doc.getElementById('tab-bar-container');
 		if (!host) return;
 		this.mount();
@@ -101,12 +115,13 @@ export class HorizontalBarController {
 			for (const group of this.groupSections.values()) group.pause();
 		}
 		if (this.root) this.root.hidden = !mounted;
-		this.renderToolbarButtons(compactMode, sidebarHealthy);
+		const trackedTabs = snapshot ?? (mounted || getPref('enableStaleSuggestions') ? this.meta.buildTrackedTabs() : []);
+		this.renderToolbarButtons(compactMode, sidebarHealthy, trackedTabs);
 		if (!mounted || !this.root || this.root.querySelector('.ztf-inline-edit')) return;
 
 		const rawGroups = this.store.visibleGroups();
 		const visibleGroupIds = new Set(rawGroups.map((group) => group.id));
-		const tracked = this.meta.buildTrackedTabs().filter((tab) => visibleGroupIds.has(tab.groupId));
+		const tracked = trackedTabs.filter((tab) => visibleGroupIds.has(tab.groupId));
 		const selectedID = this.meta.getSelectedTabID();
 		const scroll = this.root.scrollLeft;
 
@@ -118,14 +133,16 @@ export class HorizontalBarController {
 			strip.scrollLeft = pinnedScroll;
 		}
 
-		const unpinned = tracked.filter((t) => !t.pinned);
-		const openKeys = new Set(tracked.map((tab) => tab.key));
+		const unpinned = indexGroupMembers(tracked.filter((t) => !t.pinned), (tab) => tab.groupId);
+		const openKeys = new Set(trackedTabs.map((tab) => tab.key));
 		const virtualMembers = getPref('enableVirtualMembers')
 			? Object.values(this.store.state.virtualMembers).filter((member) => !openKeys.has(member.key))
 			: [];
+		const virtualsByGroup = indexGroupMembers(virtualMembers, (member) => this.store.groupOfKey(member.key));
+		const collapsedIds = new Set(this.store.state.collapsed);
 		const groups = rawGroups.filter((g) => {
-			const hasMembers = unpinned.some((item) => item.groupId === g.id);
-			const hasVirtuals = virtualMembers.some((member) => this.store.groupOfKey(member.key) === g.id);
+			const hasMembers = unpinned.has(g.id);
+			const hasVirtuals = virtualsByGroup.has(g.id);
 			return shouldRenderGroupHeading(g.id, hasMembers, hasVirtuals, Boolean(!g.id && this.store.state.ungroupedName));
 		});
 		for (const g of groups) {
@@ -141,9 +158,9 @@ export class HorizontalBarController {
 				this.groupSections.set(g.id, section);
 			}
 			section.element.style.setProperty('--ztf-color', g.color);
-			const collapsed = this.store.state.collapsed.includes(g.id);
-			const members = unpinned.filter((t) => t.groupId === g.id);
-			const virtuals = virtualMembers.filter((member) => this.store.groupOfKey(member.key) === g.id);
+			const collapsed = collapsedIds.has(g.id);
+			const members = unpinned.get(g.id) ?? [];
+			const virtuals = virtualsByGroup.get(g.id) ?? [];
 
 			section.update(g, collapsed, members.length + virtuals.length);
 			section.heading.oncontextmenu = (e: Event) => this.menus.openGroupMenu(e as MouseEvent, g);
@@ -239,69 +256,55 @@ export class HorizontalBarController {
 		return node;
 	}
 
-	private renderToolbarButtons(compactMode = false, sidebarHealthy = false): void {
+	private renderToolbarButtons(compactMode: boolean, sidebarHealthy: boolean, tracked: readonly TrackedTab[]): void {
 		if (!this.toolbarActions) return;
-		this.toolbarActions.textContent = '';
+		const actions: ToolbarAction[] = [];
 		if (compactMode || (getPref('enableHorizontalGroups') && sidebarHealthy)) {
-			const btn = this.h('button', `ztf-tb-btn${compactMode ? ' active' : ''}`);
-			btn.type = 'button';
-			btn.textContent = compactMode
-				? t('zotero-tabflow-expand-topbar', '展开横栏')
-				: t('zotero-tabflow-compact-topbar', '精简顶栏');
-			btn.title = compactMode
-				? t('zotero-tabflow-expand-topbar-tip', '恢复水平分组标签栏')
-				: t('zotero-tabflow-compact-topbar-tip', '收起水平文献标签以节省顶部空间（保留文库与侧栏）');
-			btn.onclick = () => {
-				setPref('compactTopBar', !compactMode);
-				this.onRefresh();
-			};
-			this.toolbarActions.append(btn);
+			actions.push({
+				id: 'compact', icon: 'topbar', iconOnly: true, pressed: compactMode,
+				label: t('zotero-tabflow-compact-topbar', '精简顶栏'),
+				title: compactMode
+					? t('zotero-tabflow-expand-topbar-tip', '恢复水平分组标签栏')
+					: t('zotero-tabflow-compact-topbar-tip', '收起水平文献标签以节省顶部空间（保留文库与侧栏）'),
+				run: () => { setPref('compactTopBar', !compactMode); this.onRefresh(); },
+			});
 		}
 		if (getPref('enableVerticalSidebar')) {
 			const open = !getPref('verticalSidebarCollapsed');
-			const btn = this.h('button', `ztf-tb-btn${open ? ' active' : ''}`);
-			btn.type = 'button';
-			btn.append(createSvgIcon(this.doc, 'sidebar', 13));
-			btn.title = open ? t('zotero-tabflow-sidebar-toggle-close', '收起垂直标签侧边栏') : t('zotero-tabflow-sidebar-toggle-open', '展开垂直标签侧边栏');
-			btn.onclick = () => {
-				setPref('verticalSidebarCollapsed', open);
-				this.onRefresh();
-			};
-			this.toolbarActions.append(btn);
+			actions.push({
+				id: 'sidebar', icon: 'sidebar', iconOnly: true, pressed: open,
+				label: t('zotero-tabflow-toolbar-sidebar', '标签侧栏'),
+				title: open ? t('zotero-tabflow-sidebar-toggle-close', '收起垂直标签侧边栏') : t('zotero-tabflow-sidebar-toggle-open', '展开垂直标签侧边栏'),
+				run: () => { setPref('verticalSidebarCollapsed', open); this.onRefresh(); },
+			});
 		}
 		if (getPref('enableSpotlight')) {
-			const btn = this.h('button', 'ztf-tb-btn');
-			btn.type = 'button';
-			btn.append(createSvgIcon(this.doc, 'search', 12), this.doc.createTextNode('Spotlight'));
-			btn.title = 'Spotlight (Ctrl+P)';
-			btn.onclick = () => this.spotlight.open(btn);
-			this.toolbarActions.append(btn);
+			const shortcut = Zotero.isMac ? '⌘P' : 'Ctrl+P';
+			actions.push({
+				id: 'spotlight', icon: 'search', label: t('zotero-tabflow-toolbar-spotlight', '快速查找'),
+				title: t('zotero-tabflow-toolbar-spotlight-tip', `查找标签、文献和操作（${shortcut}）`, { shortcut }),
+				run: (button) => this.spotlight.open(button),
+			});
 		}
-		if (getPref('enableSessions')) {
-			const btn = this.h('button', 'ztf-tb-btn');
-			btn.type = 'button';
-			const sessionCount = this.store.state.sessions.length;
-			btn.append(createSvgIcon(this.doc, 'layers', 12), this.doc.createTextNode(t('zotero-tabflow-sessions-btn', `会话 (${sessionCount})`, { count: sessionCount })));
-			btn.onclick = () => this.popovers.openSessionsMenu(btn);
-			this.toolbarActions.append(btn);
+		const hubCounts = computeWorkspaceHubCounts(this.store);
+		if (getPref('enableSessions') || getPref('enableGroupHiding')) {
+			actions.push({
+				id: 'workspace', icon: 'workspace', popup: 'dialog', count: hubCounts.hidden,
+				label: t('zotero-tabflow-workspace-btn', '工作区'),
+				title: t('zotero-tabflow-toolbar-workspace-tip', `隐藏项目 ${hubCounts.hidden}`, { count: hubCounts.hidden }),
+				run: (button) => this.popovers.openWorkspaceHub(button),
+			});
 		}
-		const hiddenCount = this.store.hiddenGroups().length;
-		if (hiddenCount) {
-			const btn = this.h('button', 'ztf-tb-btn ztf-hidden-groups');
-			btn.type = 'button';
-			btn.textContent = t('zotero-tabflow-hidden-groups', `已隐藏 (${hiddenCount})`, { count: hiddenCount });
-			btn.setAttribute('aria-haspopup', 'menu');
-			btn.onclick = () => this.popovers.openHiddenGroupsMenu(btn);
-			this.toolbarActions.append(btn);
+		const count = this.tracker.getStaleTabs(Date.now(), tracked).length;
+		if (count) {
+			actions.push({
+				id: 'stale', icon: 'clock', popup: 'menu', count, status: 'attention',
+				label: t('zotero-tabflow-toolbar-stale', '建议关闭'),
+				title: t('zotero-tabflow-stale-btn', `建议关闭 (${count})`, { count }),
+				run: (button) => this.popovers.openStaleMenu(button),
+			});
 		}
-		if (getPref('enableStaleSuggestions')) {
-			const count = this.tracker.getStaleTabs().length;
-			const btn = this.h('button', `ztf-tb-btn${count ? ' warn' : ''}`);
-			btn.type = 'button';
-			btn.append(createSvgIcon(this.doc, 'clock', 12), this.doc.createTextNode(t('zotero-tabflow-stale-btn', `建议关闭 (${count})`, { count })));
-			btn.onclick = () => this.popovers.openStaleMenu(btn);
-			this.toolbarActions.append(btn);
-		}
+		this.toolbar.render(this.toolbarActions, actions);
 	}
 
 	dispose(): void {

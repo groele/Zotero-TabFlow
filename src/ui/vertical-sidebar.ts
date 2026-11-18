@@ -1,17 +1,18 @@
+import { parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
 import { t } from '../core/i18n.ts';
 import { getPref, setPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
-import type { SidebarViewMode } from '../core/types.ts';
+import type { SidebarViewMode, TrackedTab } from '../core/types.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { GroupSection, reconcileGroupSections } from './group-section.ts';
-import { shouldRenderGroupHeading } from './group-visibility.ts';
+import { indexGroupMembers, shouldRenderGroupHeading } from './group-visibility.ts';
 import { createSvgIcon } from './icons.ts';
 import { SidebarHoverCard } from './sidebar-hover.ts';
 import { bindSidebarKeyboardNavigation, captureSidebarFocusAnchor, restoreSidebarFocusAnchor } from './sidebar-keyboard.ts';
 import { buildSidebarTabRow, buildSidebarVirtualRow, type SidebarRowDeps } from './sidebar-row.ts';
 import { SidebarSelection } from './sidebar-selection.ts';
-import { computeWorkspaceStatusCounts, renderSidebarEmptyState, renderSidebarStatusBar } from './sidebar-status.ts';
+import { computeWorkspaceStatusCounts, buildSidebarSection, renderSidebarEmptyState, renderSidebarStatusBar } from './sidebar-status.ts';
 import type { TabContextMenuController } from './tab-context-menu.ts';
 
 export class VerticalSidebarController {
@@ -23,6 +24,7 @@ export class VerticalSidebarController {
 	private hoverCard: SidebarHoverCard;
 	private viewMode: SidebarViewMode = 'groups';
 	private draggedKey: string | null = null;
+	private draggedTabId: string | null = null;
 	private groupSections = new Map<string, GroupSection>();
 	private collapsedSections = new Set<string>();
 
@@ -126,7 +128,7 @@ export class VerticalSidebarController {
 		this.selection = new SidebarSelection(
 			this.doc, this.store, headerActions, aside, list,
 			() => this.renderList(),
-			(ids) => void this.actions.closeTabs(ids, { preserveVirtual: true, protectPinned: true }).then(this.onRefresh),
+			(ids) => void this.actions.closeTabs(ids, { preserveVirtual: true, protectPinned: true, protectMedia: true }).then(this.onRefresh),
 		);
 		bindSidebarKeyboardNavigation(aside, list, search, () => { search.value = ''; this.renderList(); });
 		deckParent.insertBefore(aside, deck);
@@ -160,7 +162,7 @@ export class VerticalSidebarController {
 		};
 	}
 
-	render(): void {
+	render(tracked?: readonly TrackedTab[]): void {
 		this.mount();
 		if (!this.sidebar) return;
 		const enabled = getPref('enableVerticalSidebar');
@@ -177,15 +179,15 @@ export class VerticalSidebarController {
 		this.sidebar.style.setProperty('--ztf-sb-width', `${getPref('verticalSidebarWidth')}px`);
 		this.sidebar.style.setProperty('--ztf-row-height', `${getPref('verticalTabRowHeight')}px`);
 		this.sidebar.style.setProperty('--ztf-font-size', `${getPref('verticalTabFontSize')}px`);
-		this.renderList();
+		this.renderList(tracked);
 	}
 
-	private renderList(): void {
+	private renderList(snapshot?: readonly TrackedTab[]): void {
 		if (!this.listEl) return;
 		const focusAnchor = captureSidebarFocusAnchor(this.doc, this.sidebar);
 		const q = (this.searchInput?.value || '').trim().toLowerCase();
 		const selectedID = this.meta.getSelectedTabID();
-		const tracked = this.meta.buildTrackedTabs();
+		const tracked = snapshot ?? this.meta.buildTrackedTabs();
 		const groups = this.store.visibleGroups();
 		const visibleGroupIds = new Set(groups.map((group) => group.id));
 		const visibleTabs = tracked.filter((tab) => visibleGroupIds.has(tab.groupId));
@@ -206,16 +208,19 @@ export class VerticalSidebarController {
 
 		if (this.viewMode === 'groups') {
 			if (!this.groupSections.size) this.listEl.replaceChildren();
+			const tabsByGroup = indexGroupMembers(allTracked, (tab) => tab.groupId);
+			const virtualsByGroup = indexGroupMembers(matchingVirtuals, (member) => this.store.groupOfKey(member.key));
+			const collapsedIds = new Set(this.store.state.collapsed);
 			const renderedGroups = groups.filter((g) => {
-				const hasOpenMembers = allTracked.some((tab) => tab.groupId === g.id);
-				const hasVirtualMembers = matchingVirtuals.some((member) => this.store.groupOfKey(member.key) === g.id);
+				const hasOpenMembers = tabsByGroup.has(g.id);
+				const hasVirtualMembers = virtualsByGroup.has(g.id);
 				return shouldRenderGroupHeading(g.id, hasOpenMembers, hasVirtualMembers, Boolean(!g.id && this.store.state.ungroupedName));
 			});
 			renderedGroupsCount = renderedGroups.length;
 			for (const g of renderedGroups) {
-				const members = allTracked.filter((t) => t.groupId === g.id);
-				const virtuals = matchingVirtuals.filter((m) => this.store.groupOfKey(m.key) === g.id);
-				const collapsed = this.store.state.collapsed.includes(g.id);
+				const members = tabsByGroup.get(g.id) ?? [];
+				const virtuals = virtualsByGroup.get(g.id) ?? [];
+				const collapsed = collapsedIds.has(g.id);
 				const section = this.getGroupSection(g.id);
 				section.element.style.setProperty('--ztf-group-dot', g.color);
 				section.update(g, collapsed, members.length + virtuals.length);
@@ -233,9 +238,13 @@ export class VerticalSidebarController {
 			this.listEl.replaceChildren();
 			if (this.viewMode === 'collection') {
 				const colors = ['#3977d5', '#21866a', '#8b5ac7', '#dc8225'];
-				[...new Set(allTracked.map((t) => t.collection))].forEach((col, i) => {
-					const items = allTracked.filter((t) => t.collection === col);
-					const sec = this.buildSection(`col:${col}`, col, colors[i % colors.length], items.length);
+				[...indexGroupMembers(allTracked, (tab) => tab.collection)].forEach(([col, items], i) => {
+					const sec = buildSidebarSection(this.doc, this.collapsedSections, `col:${col}`, col, colors[i % colors.length], items.length, () => {
+						const g = this.store.ensureGroup(col);
+						this.store.assignKeys(items.map((x) => x.key), g.id);
+						this.viewMode = 'groups';
+						this.onRefresh();
+					});
 					const body = sec.querySelector('.ztf-sb-group-body')!;
 					for (const item of items) body.append(buildSidebarTabRow(this.rowDeps(), item, selectedID));
 					this.listEl!.append(sec);
@@ -245,7 +254,7 @@ export class VerticalSidebarController {
 					['status:active', t('zotero-tabflow-sidebar-status-active', '已加载阅读器'), '#16a34a', allTracked.filter((x) => x.status === 'active')],
 					['status:sleeping', t('zotero-tabflow-sidebar-status-sleeping', '已休眠省内存'), '#d97706', allTracked.filter((x) => x.status === 'sleeping')],
 				] as const) {
-					const sec = this.buildSection(id, label, color, items.length);
+					const sec = buildSidebarSection(this.doc, this.collapsedSections, id, label, color, items.length);
 					const body = sec.querySelector('.ztf-sb-group-body')!;
 					for (const item of items) body.append(buildSidebarTabRow(this.rowDeps(), item, selectedID));
 					this.listEl.append(sec);
@@ -288,6 +297,8 @@ export class VerticalSidebarController {
 			onRefresh: this.onRefresh,
 			getDraggedKey: () => this.draggedKey,
 			setDraggedKey: (key) => { this.draggedKey = key; },
+			getDraggedTabId: () => this.draggedTabId,
+			setDraggedTabId: (id) => { this.draggedTabId = id; },
 		};
 	}
 
@@ -303,13 +314,25 @@ export class VerticalSidebarController {
 		section.heading.dataset.ztfNav = 'head';
 		section.heading.dataset.ztfNavId = id;
 		section.heading.prepend(this.h('span', 'ztf-sb-dot'));
-		section.heading.ondragover = (e: Event) => { if (this.draggedKey) e.preventDefault(); };
+		section.heading.ondragover = (e: Event) => {
+			if (this.draggedKey || parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer).length) e.preventDefault();
+		};
 		section.heading.ondrop = (e: Event) => {
 			e.preventDefault();
-			if (!this.draggedKey) return;
-			this.store.assignKey(this.draggedKey, id);
-			this.draggedKey = null;
-			this.onRefresh();
+			if (this.draggedKey) {
+				this.store.assignKey(this.draggedKey, id);
+				this.draggedKey = null;
+				this.draggedTabId = null;
+				this.onRefresh();
+				return;
+			}
+			const extIds = parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer);
+			if (extIds.length) {
+				void (async () => {
+					for (const itemID of extIds) await this.actions.openVirtualOrItem(itemID, id);
+					this.onRefresh();
+				})();
+			}
 		};
 		this.groupSections.set(id, section);
 		return section;
@@ -318,33 +341,6 @@ export class VerticalSidebarController {
 	private clearGroupSections(): void {
 		for (const section of this.groupSections.values()) section.dispose();
 		this.groupSections.clear();
-	}
-
-	private buildSection(id: string, title: string, color: string, count: number): HTMLElement {
-		const collapsed = this.collapsedSections.has(id);
-		const wrap = this.h('div', 'ztf-sb-group');
-		const head = this.h('button', 'ztf-sb-group-head');
-		head.type = 'button';
-		head.dataset.ztfNav = 'head';
-		head.dataset.ztfNavId = id;
-		const arrow = this.h('span', 'ztf-sb-caret');
-		arrow.textContent = collapsed ? '▸' : '▾';
-		const dot = this.h('span', 'ztf-sb-dot');
-		dot.style.background = color;
-		const txt = this.h('span', 'ztf-sb-group-title');
-		txt.textContent = `${title} (${count})`;
-		const body = this.h('div', 'ztf-sb-group-body');
-		body.hidden = collapsed;
-		head.onclick = () => {
-			const next = !this.collapsedSections.has(id);
-			if (next) this.collapsedSections.add(id);
-			else this.collapsedSections.delete(id);
-			arrow.textContent = next ? '▸' : '▾';
-			body.hidden = next;
-		};
-		head.append(arrow, dot, txt);
-		wrap.append(head, body);
-		return wrap;
 	}
 
 	dispose(): void {

@@ -76,6 +76,31 @@ test('TabFlowStore handles groups, remarks, pinning, sleeping, virtual members, 
 	assert.equal(store.groupOfKey('1:ABC'), '');
 });
 
+test('dissolving a group atomically clears group references while preserving virtual documents', () => {
+	memPrefs.clear();
+	const store = new TabFlowStore();
+	const group = store.ensureGroup('Archive');
+	store.assignKeys(['1:OPEN', '1:CLOSED'], group.id);
+	store.setCollapsed(group.id, true);
+	store.state.groupDisplay[group.id] = 'note';
+	store.saveVirtualMember({ key: '1:CLOSED', itemID: 12, parentItemID: null, title: 'Kept', shortTitle: 'Kept', filename: 'kept.pdf', source: '', creatorYear: '', collection: '', type: 'reader' });
+
+	assert.equal(store.dissolveGroup(group.id), true);
+	assert.equal(store.state.groups.some((candidate) => candidate.id === group.id), false);
+	assert.equal(store.groupOfKey('1:OPEN'), '');
+	assert.equal(store.groupOfKey('1:CLOSED'), '');
+	assert.equal(store.state.virtualMembers['1:CLOSED'].itemID, 12);
+	assert.equal(store.state.order.includes(group.id), false);
+	assert.equal(store.state.collapsed.includes(group.id), false);
+	assert.equal(store.state.groupDisplay[group.id], undefined);
+
+	const readonly = store.ensureGroup('Read only');
+	store.readOnly = true;
+	assert.equal(store.dissolveGroup(readonly.id), false);
+	assert.equal(store.state.groups.some((candidate) => candidate.id === readonly.id), true);
+	assert.equal(store.dissolveGroup(''), false);
+});
+
 test('color normalization and contrast ink calculation', () => {
 	assert.equal(normalizeHexColor('abc'), '#aabbcc');
 	assert.equal(normalizeHexColor('#3977D5'), '#3977d5');

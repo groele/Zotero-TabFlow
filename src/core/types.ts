@@ -10,6 +10,7 @@ export interface TabCloseOptions {
 	preserveVirtual?: boolean;
 	protectPinned?: boolean;
 	protectSelected?: boolean;
+	protectMedia?: boolean;
 }
 
 export interface TabGroup {

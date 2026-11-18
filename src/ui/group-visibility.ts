@@ -7,3 +7,14 @@ export function shouldRenderGroupHeading(
 ): boolean {
 	return Boolean(groupId || hasCustomName || hasOpenMembers || hasVirtualMembers);
 }
+
+export function indexGroupMembers<T>(members: readonly T[], groupOf: (member: T) => string): Map<string, T[]> {
+	const groups = new Map<string, T[]>();
+	for (const member of members) {
+		const groupId = groupOf(member);
+		const bucket = groups.get(groupId);
+		if (bucket) bucket.push(member);
+		else groups.set(groupId, [member]);
+	}
+	return groups;
+}

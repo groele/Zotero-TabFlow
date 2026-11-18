@@ -1,8 +1,26 @@
+import { computeNativeTabMoveTarget } from '../core/drag-utils.ts';
 import { getPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
-import type { TabCloseOptions, TrackedTab, VirtualMemberMeta } from '../core/types.ts';
+import type { NativeTabLike, TabCloseOptions, TrackedTab, VirtualMemberMeta } from '../core/types.ts';
 import { openAttachmentFolder } from './attachment-folder.ts';
 import { uncategorizedCollectionLabel, type ItemMetadataService } from './item-metadata.ts';
+
+export function isTabBusyOrProtected(
+	tab: NativeTabLike,
+	reader: any,
+	options: TabCloseOptions,
+	isPinned: boolean,
+	selectedID: string,
+): boolean {
+	if (options.protectPinned && isPinned) return true;
+	if (options.protectSelected && tab.id === selectedID) return true;
+	if (options.protectMedia) {
+		if ((tab.data as any)?.soundPlaying || reader?.soundPlaying || reader?._internalReader?.hasUnsavedChanges) {
+			return true;
+		}
+	}
+	return false;
+}
 
 function toVirtualMember(tab: TrackedTab): VirtualMemberMeta | null {
 	if (!tab.itemID) return null;
@@ -41,8 +59,6 @@ export class TabActionService {
 		const tabs = (this.win as any).Zotero_Tabs;
 		if (!tabs || !tabIds.length) return 0;
 		const preserveVirtual = options.preserveVirtual ?? true;
-		const protectPinned = options.protectPinned ?? false;
-		const protectSelected = options.protectSelected ?? false;
 		const selectedID = this.meta.getSelectedTabID();
 		const nativeMap = new Map(this.meta.getNativeTabs().map((t) => [t.id, t]));
 		const trackedMap = new Map(this.meta.buildTrackedTabs().map((t) => [t.tab.id, t]));
@@ -51,9 +67,9 @@ export class TabActionService {
 		for (const id of new Set(tabIds)) {
 			const tab = nativeMap.get(id);
 			if (!tab || tab.type === 'library') continue;
-			if (protectSelected && id === selectedID) continue;
 			const tracked = trackedMap.get(id);
-			if (protectPinned && tracked?.pinned) continue;
+			const reader = (Zotero.Reader as any)?.getByTabID?.(id);
+			if (isTabBusyOrProtected(tab, reader, options, Boolean(tracked?.pinned), selectedID)) continue;
 			if (tracked?.groupId && preserveVirtual && getPref('enableVirtualMembers')) {
 				const member = toVirtualMember(tracked);
 				if (member) this.store.saveVirtualMember(member);
@@ -88,9 +104,10 @@ export class TabActionService {
 		if (!getPref('enableTabSleep')) return false;
 		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
 		const key = this.meta.tabKey(tab);
-		if (!key || this.store.isPinned(key)) return false;
+		if (!tab || !key || this.store.isPinned(key)) return false;
 		const tabs = (this.win as any).Zotero_Tabs;
 		const reader = (Zotero.Reader as any)?.getByTabID?.(tabId);
+		if (isTabBusyOrProtected(tab, reader, { protectMedia: true }, false, '')) return false;
 		let unloaded = false;
 		if (typeof tabs?.unload === 'function') {
 			try { tabs.unload(tabId); unloaded = true; } catch { /* fallback below */ }
@@ -115,13 +132,13 @@ export class TabActionService {
 		return count;
 	}
 
-	async openVirtualOrItem(itemID: number, groupId?: string, openInBackground = false): Promise<void> {
+	async openVirtualOrItem(itemID: number, groupId?: string, openInBackground = false): Promise<boolean> {
 		try {
 			const item = Zotero.Items.get(itemID);
-			if (!item || item.deleted) return;
+			if (!item || item.deleted) return false;
 			const attachment = item.isAttachment() ? item : await item.getBestAttachment();
-			if (!attachment || attachment.deleted) return;
-			if (attachment.isFileAttachment() && !await attachment.fileExists()) return;
+			if (!attachment || attachment.deleted) return false;
+			if (attachment.isFileAttachment() && !await attachment.fileExists()) return false;
 			const key = `${attachment.libraryID}:${attachment.key}`;
 			const virtual = this.store.state.virtualMembers[key];
 			await Zotero.Reader.open(attachment.id, undefined, { openInBackground });
@@ -129,8 +146,10 @@ export class TabActionService {
 			const currentGroup = this.store.groupOfKey(key);
 			const hidden = this.store.state.groups.some((group) => group.id === currentGroup && group.hidden === true);
 			if (!hidden && virtual && this.store.state.virtualMembers[key] === virtual) this.store.removeVirtualMember(key);
+			return true;
 		} catch (error) {
 			Zotero.logError(error as Error);
+			return false;
 		}
 	}
 
@@ -161,6 +180,16 @@ export class TabActionService {
 		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
 		const primary = this.meta.resolvePrimaryItem(tab?.data?.itemID ?? null);
 		if (primary) (this.win as any).ZoteroPane?.selectItem?.(primary.id);
+	}
+
+	moveTabRelative(draggedTabId: string, targetTabId: string, after: boolean): boolean {
+		const tabs = (this.win as any).Zotero_Tabs;
+		if (!tabs?.move) return false;
+		const ids = this.meta.getNativeTabs().map((t) => t.id);
+		const targetIdx = computeNativeTabMoveTarget(ids, draggedTabId, targetTabId, after);
+		if (targetIdx < 0) return false;
+		tabs.move(draggedTabId, targetIdx);
+		return true;
 	}
 
 	showCollectionInLibrary(tabId: string): boolean {

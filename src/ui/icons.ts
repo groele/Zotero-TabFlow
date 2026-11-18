@@ -13,7 +13,9 @@ export type IconName =
 	| 'layers'
 	| 'plus'
 	| 'close'
-	| 'sidebar';
+	| 'sidebar'
+	| 'topbar'
+	| 'workspace';
 
 interface ShapeDef {
 	tag: 'path' | 'circle' | 'rect' | 'ellipse';
@@ -67,6 +69,14 @@ const ICONS: Record<IconName, ShapeDef[]> = {
 	sidebar: [
 		{ tag: 'rect', attrs: { x: '2.2', y: '2.8', width: '11.6', height: '10.4', rx: '1.6' } },
 		{ tag: 'path', attrs: { d: 'M6 2.8v10.4' } },
+	],
+	topbar: [
+		{ tag: 'rect', attrs: { x: '2.2', y: '2.8', width: '11.6', height: '10.4', rx: '1.6' } },
+		{ tag: 'path', attrs: { d: 'M2.3 6.4h11.4' } },
+	],
+	workspace: [
+		{ tag: 'rect', attrs: { x: '2.2', y: '2.8', width: '11.6', height: '10.4', rx: '1.6' } },
+		{ tag: 'path', attrs: { d: 'M2.3 6h11.4M9.4 6v7.2' } },
 	],
 };
 

@@ -73,6 +73,25 @@ export function appendRollingSnapshot(state: TabFlowState, snap: TabSessionSnaps
 	return true;
 }
 
+export function promoteRollingSnapshot(state: TabFlowState, id: string, customName?: string): TabSessionSnapshot | null {
+	const current = state.rollingSessions ?? [];
+	const idx = current.findIndex((s) => s.id === id);
+	if (idx < 0) return null;
+	const source = current[idx];
+	const nextRolling = current.filter((s) => s.id !== id);
+	state.rollingSessions = nextRolling;
+	const now = Date.now();
+	const promoted: TabSessionSnapshot = {
+		...source,
+		id: `s-${now}-${Math.random().toString(36).slice(2, 6)}`,
+		name: customName?.trim().slice(0, 60) || source.name,
+		createdAt: now,
+		kind: 'manual',
+	};
+	appendManualSession(state, promoted);
+	return promoted;
+}
+
 export function applySessionLayout(
 	state: TabFlowState, snapshot: TabSessionSnapshot, merge: boolean, virtualMembers?: readonly VirtualMemberMeta[],
 ): void {

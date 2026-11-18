@@ -4,12 +4,14 @@ import type { PublicationGroupSuggestion, SessionImportPreview, SessionRestorePl
 const XHTML = 'http://www.w3.org/1999/xhtml';
 
 export class SessionPreviewController {
-	private panel: any = null;
+	private readonly win: Window;
+	private readonly doc: Document;
+	private overlay: HTMLDivElement | null = null;
 
-	constructor(
-		private readonly win: Window,
-		private readonly doc: Document,
-	) {}
+	constructor(win: Window, doc: Document) {
+		this.win = win;
+		this.doc = doc;
+	}
 
 	private h<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
 		const el = this.doc.createElementNS(XHTML, tag) as HTMLElementTagNameMap[K];
@@ -19,32 +21,25 @@ export class SessionPreviewController {
 
 	private createPanel(buildBody: (box: HTMLDivElement, close: () => void) => void): void {
 		this.dispose();
-		const popupset = this.doc.getElementById('mainPopupSet') || this.doc.querySelector('popupset');
-		if (!popupset) return;
-		const panel = (this.doc as any).createXULElement
-			? (this.doc as any).createXULElement('panel')
-			: this.doc.createElementNS('http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul', 'panel');
-		panel.id = 'ztf-session-preview-panel';
-		panel.setAttribute('orient', 'vertical');
+		const host = this.doc.body || this.doc.documentElement;
+		if (!host) return;
+		const backdrop = this.h('div');
+		backdrop.id = 'ztf-preview-backdrop';
+		backdrop.setAttribute('role', 'dialog');
+		backdrop.setAttribute('aria-modal', 'true');
 
 		const box = this.h('div', 'ztf-preview-box');
 		const close = () => this.dispose();
 		buildBody(box, close);
-		box.addEventListener('keydown', (e: KeyboardEvent) => {
-			if (e.key === 'Escape') { e.preventDefault(); close(); }
+		backdrop.addEventListener('click', (e: MouseEvent) => {
+			if (e.target === backdrop) close();
 		});
-		panel.append(box);
-		panel.addEventListener('popuphidden', () => {
-			if (this.panel === panel) {
-				this.panel = null;
-				panel.remove();
-			}
+		backdrop.addEventListener('keydown', (e: KeyboardEvent) => {
+			if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
 		});
-		popupset.append(panel);
-		this.panel = panel;
-		const screenX = Math.round(((this.win as any).mozInnerScreenX || 0) + Math.max(24, (this.win.innerWidth - 440) / 2));
-		const screenY = Math.round(((this.win as any).mozInnerScreenY || 0) + 74);
-		panel.openPopupAtScreen(screenX, screenY, false);
+		backdrop.append(box);
+		host.append(backdrop);
+		this.overlay = backdrop;
 	}
 
 	openRestorePreview(
@@ -118,7 +113,7 @@ export class SessionPreviewController {
 			};
 			footer.append(cancelBtn, okBtn);
 			box.append(title, modeRow, stats, note, missingList, footer);
-			this.win.setTimeout(() => okBtn.focus(), 20);
+			okBtn.focus?.();
 		});
 	}
 
@@ -152,6 +147,7 @@ export class SessionPreviewController {
 			okBtn.onclick = () => { close(); onConfirm(); };
 			footer.append(cancelBtn, okBtn);
 			box.append(title, stats, note, missingList, footer);
+			okBtn.focus?.();
 		});
 	}
 
@@ -186,6 +182,7 @@ export class SessionPreviewController {
 			okBtn.onclick = () => { close(); onApply(suggestions.filter((s) => checked.has(s.venue))); };
 			footer.append(cancelBtn, okBtn);
 			box.append(title, list, footer);
+			okBtn.focus?.();
 		});
 	}
 
@@ -200,8 +197,7 @@ export class SessionPreviewController {
 	}
 
 	dispose(): void {
-		this.panel?.hidePopup?.();
-		this.panel?.remove?.();
-		this.panel = null;
+		this.overlay?.remove?.();
+		this.overlay = null;
 	}
 }

@@ -15,7 +15,6 @@ export class TabContextMenuController {
 		private readonly meta: ItemMetadataService,
 		private readonly actions: TabActionService,
 		private readonly onRefresh: () => void,
-		private readonly onSuggestByVenue?: () => void,
 	) {}
 
 	private xul(tag: string): any {
@@ -74,9 +73,9 @@ export class TabContextMenuController {
 				dispMenu.append(dispPop);
 				popup.append(dispMenu);
 				for (const [mode, label] of [
-					['both', t('zotero-tabflow-display-both', '备注 + 原标题')],
-					['note', t('zotero-tabflow-display-note', '仅显示备注')],
-					['original', t('zotero-tabflow-display-original', '仅显示原标题')],
+					['both', t('zotero-tabflow-remark-mode-both', '备注 + 原标题')],
+					['note', t('zotero-tabflow-remark-mode-note', '仅显示备注')],
+					['original', t('zotero-tabflow-remark-mode-original', '仅显示原标题')],
 				] as const) {
 					this.item(dispPop, label, () => { this.store.setDisplayMode(tracked.key, mode); this.onRefresh(); }, { type: 'radio', checked: remark.mode === mode });
 				}
@@ -154,8 +153,16 @@ export class TabContextMenuController {
 				}
 				this.item(popup, t('zotero-tabflow-dissolve-group', '解散此分组'), () => {
 					if (Services.prompt.confirm(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-confirm', `解散“${group.name}”？标签页将保留并回到未分组。`, { name: group.name }))) {
-						this.store.dissolveGroup(group.id);
-						this.onRefresh();
+						try {
+							if (!this.store.dissolveGroup(group.id)) {
+								Services.prompt.alert(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-failed', '无法解散分组：数据为只读，或分组已不存在。'));
+								return;
+							}
+							this.onRefresh();
+						} catch (error) {
+							Zotero.logError(error as Error);
+							Services.prompt.alert(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-failed', '无法解散分组：数据为只读，或分组已不存在。'));
+						}
 					}
 				});
 			}
@@ -183,23 +190,14 @@ export class TabContextMenuController {
 					})();
 				});
 			}
-			if (getPref('enableCopyReference')) {
-				const groupTabs = this.meta.buildTrackedTabs().filter((x) => x.groupId === group.id);
-				const items = groupTabs.map((x) => this.meta.resolvePrimaryItem(x.itemID)).filter(Boolean);
-				this.item(popup, t('zotero-tabflow-menu-copy-group-refs', `复制组内全部引用 (${items.length})`, { count: items.length }), () => this.actions.copyReferencesForItems(items), { disabled: !items.length });
-			}
 			this.item(popup, t('zotero-tabflow-menu-open-group-only', '仅打开本组（关闭其他标签）'), () => {
 				const ids = this.meta.buildTrackedTabs().filter((x) => x.groupId !== group.id && !x.pinned).map((x) => x.tab.id);
-				void this.actions.closeTabs(ids, { preserveVirtual: true, protectPinned: true }).then(this.onRefresh);
+				void this.actions.closeTabs(ids, { preserveVirtual: true, protectPinned: true, protectMedia: true }).then(this.onRefresh);
 			});
 			this.item(popup, t('zotero-tabflow-menu-close-group-all', '关闭组内所有已开标签'), () => {
 				const ids = this.meta.buildTrackedTabs().filter((x) => x.groupId === group.id).map((x) => x.tab.id);
-				void this.actions.closeTabs(ids, { preserveVirtual: true, protectPinned: true }).then(this.onRefresh);
+				void this.actions.closeTabs(ids, { preserveVirtual: true, protectPinned: true, protectMedia: true }).then(this.onRefresh);
 			});
-			if (this.onSuggestByVenue) {
-				this.item(popup, `🗂️ ${t('zotero-tabflow-menu-suggest-venue', '按期刊自动归组建议…')}`, () => this.onSuggestByVenue?.());
-			}
-			this.item(popup, `↩ ${t('zotero-tabflow-menu-undo-close', '恢复最近关闭的标签页')}`, () => { this.actions.undoCloseTab(); this.onRefresh(); });
 		});
 	}
 

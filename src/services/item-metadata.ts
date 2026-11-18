@@ -75,13 +75,18 @@ export class ItemMetadataService {
 	buildTrackedTabs(): TrackedTab[] {
 		const enablePinned = getPref('enablePinnedTabs');
 		const enableSleep = getPref('enableTabSleep');
+		const { assignments, groups, pinned, sleeping } = this.store.state;
+		const groupIds = new Set(groups.map((group) => group.id));
+		const pinnedKeys = new Set(enablePinned ? pinned : []);
+		const sleepingKeys = new Set(enableSleep ? sleeping : []);
+		const collections = new Map<number, string>();
 		return this.getNativeTabs()
 			.filter((t) => t.type !== 'library')
 			.map((tab) => {
-				const key = this.tabKey(tab) || `tab:${tab.id}`;
 				const itemID = typeof tab.data?.itemID === 'number' ? tab.data.itemID : null;
 				const rawItem: any = itemID ? Zotero.Items.get(itemID) : null;
-				const primary = this.resolvePrimaryItem(itemID);
+				const key = rawItem ? `${rawItem.libraryID}:${rawItem.key}` : `tab:${tab.id}`;
+				const primary = rawItem?.parentItemID ? Zotero.Items.get(rawItem.parentItemID) || rawItem : rawItem;
 				const title = this.plainTitle(String(primary?.getField?.('title') || tab.title || t('zotero-tabflow-untitled', '无标题')));
 				const shortTitle = this.plainTitle(String(primary?.getField?.('shortTitle') || title));
 				const filename = String(rawItem?.isAttachment?.() ? rawItem.attachmentFilename || title : title);
@@ -96,10 +101,10 @@ export class ItemMetadataService {
 				const firstAuthor = creators[0]?.lastName || creators[0]?.firstName || '';
 				const year = String(primary?.getField?.('year') || '').slice(0, 4);
 				const creatorYear = [firstAuthor, year].filter(Boolean).join(', ');
-				const collection = this.resolveCollectionName(primary);
-				const reader = (Zotero.Reader as any)?.getByTabID?.(tab.id);
+				const collection = collections.get(primary?.id) ?? this.resolveCollectionName(primary);
+				if (primary) collections.set(primary.id, collection);
+				const reader = sleepingKeys.has(key) ? (Zotero.Reader as any)?.getByTabID?.(tab.id) : null;
 				const hostLoaded = Boolean(reader && reader.initialized !== false && !(tab.data as any)?.unloaded);
-				const sleeping = enableSleep && this.store.isSleeping(key) && !hostLoaded;
 				return {
 					tab,
 					key,
@@ -111,9 +116,9 @@ export class ItemMetadataService {
 					source,
 					creatorYear,
 					collection,
-					groupId: this.store.groupOfKey(key),
-					pinned: enablePinned && this.store.isPinned(key),
-					status: sleeping ? 'sleeping' : 'active',
+					groupId: groupIds.has(assignments[key]) ? assignments[key] : '',
+					pinned: pinnedKeys.has(key),
+					status: sleepingKeys.has(key) && !hostLoaded ? 'sleeping' : 'active',
 				};
 			});
 	}

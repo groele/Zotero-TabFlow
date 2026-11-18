@@ -32,6 +32,7 @@ class WindowWorkspace {
 	private ageTickCount = 0;
 
 	private saveRollingIfNeeded(): void {
+		if (!getPref('enableRollingSnapshots')) return;
 		const keys = this.meta.buildTrackedTabs().map((t) => t.key);
 		if (keys.length || this.store.state.groups.length) {
 			this.store.saveRollingSnapshot(keys);
@@ -48,7 +49,7 @@ class WindowWorkspace {
 		this.tracker = new ActivityTrackerService(store, this.meta);
 		const refresh = () => this.schedule();
 		this.popovers = new PopoverController(win, doc, store, this.meta, this.actions, this.tracker, refresh);
-		this.tabMenus = new TabContextMenuController(win, doc, store, this.meta, this.actions, refresh, () => this.popovers.openPublicationSuggest());
+		this.tabMenus = new TabContextMenuController(win, doc, store, this.meta, this.actions, refresh);
 		this.itemMenus = new ItemContextMenuController(win, doc, store, this.actions, refresh);
 		this.spotlight = new SpotlightController(win, doc, store, this.meta, this.actions, this.popovers, refresh);
 		this.horizontal = new HorizontalBarController(win, doc, store, this.meta, this.actions, this.tracker, this.tabMenus, this.popovers, this.spotlight, refresh);
@@ -77,9 +78,12 @@ class WindowWorkspace {
 				notify: (event: string, _type: string, ids: Array<string | number>) => {
 					const tabIds = ids.map(String);
 					if (event === 'add') {
-						for (const t of this.meta.buildTrackedTabs()) {
-							if (tabIds.includes(t.tab.id) && this.store.state.collapsed.includes(t.groupId)) {
-								this.store.setCollapsed(t.groupId, false, false);
+						if (this.store.state.collapsed.length) {
+							const added = new Set(tabIds);
+							for (const tab of this.meta.getNativeTabs()) {
+								if (tab.type === 'library' || !added.has(tab.id)) continue;
+								const groupId = this.store.groupOfKey(this.meta.tabKey(tab));
+								if (this.store.state.collapsed.includes(groupId)) this.store.setCollapsed(groupId, false, false);
 							}
 						}
 						if (getPref('enableCollectionAutoGroup')) {
@@ -95,6 +99,7 @@ class WindowWorkspace {
 			'zotero-tabflow',
 		);
 
+		this.refresh();
 		const host = doc.getElementById('tab-bar-container');
 		if (host) {
 			this.observer = new (this.win as any).MutationObserver((records: MutationRecord[]) => {
@@ -118,7 +123,6 @@ class WindowWorkspace {
 			if (this.ageTickCount % 5 === 0) this.saveRollingIfNeeded();
 			this.schedule();
 		}, 60_000);
-		this.refresh();
 	}
 
 	schedule(): void {
@@ -132,11 +136,19 @@ class WindowWorkspace {
 	refresh(): void {
 		if (this.disposed) return;
 		const prevSelected = this.lastSelected;
-		this.lastSelected = this.tracker.trackActivity(this.lastSelected);
 		const tracked = this.meta.buildTrackedTabs();
-		const hiddenGroupIds = new Set(this.store.state.groups.filter((group) => group.hidden === true).map((group) => group.id));
-		for (const t of tracked) {
-			if (!hiddenGroupIds.has(t.groupId)) this.store.removeVirtualMember(t.key, false);
+		this.lastSelected = this.tracker.trackActivity(this.lastSelected, tracked);
+		const retained = this.store.state.virtualMembers;
+		if (Object.keys(retained).length) {
+			const hiddenIds = new Set(this.store.state.groups.filter((group) => group.hidden === true).map((group) => group.id));
+			let changed = false;
+			for (const tab of tracked) {
+				if (!hiddenIds.has(tab.groupId) && Object.hasOwn(retained, tab.key)) {
+					delete retained[tab.key];
+					changed = true;
+				}
+			}
+			if (changed) this.store.save(false);
 		}
 		if (this.lastSelected && this.lastSelected !== prevSelected) {
 			const active = tracked.find((t) => t.tab.id === this.lastSelected);
@@ -144,8 +156,8 @@ class WindowWorkspace {
 				this.store.setCollapsed(active.groupId, false, false);
 			}
 		}
-		this.sidebar.render();
-		this.horizontal.render();
+		this.sidebar.render(tracked);
+		this.horizontal.render(tracked);
 	}
 
 	dispose(): void {

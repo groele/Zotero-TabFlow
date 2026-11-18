@@ -49,12 +49,15 @@ test('source files respect 360-line ceiling and zero debt', () => {
 	assert.deepEqual(violations, []);
 });
 
-test('version alignment across package, manifest, update.json, baseline, prefs.xhtml', () => {
+test('version alignment across package, lockfile, manifest, update.json, baseline, README, prefs.xhtml', () => {
 	const pkg = readJson('package.json');
+	const lock = readJson('package-lock.json');
 	const manifest = readJson('manifest.json');
 	const update = readJson('update.json');
 	const xhtml = read('prefs.xhtml');
+	const readme = read('README.md');
 	const version = pkg.version;
+	assert.equal(lock.packages?.['']?.version, version);
 	assert.equal(manifest.version, version);
 	assert.equal(baseline.lastReleasedVersion, version);
 	const addonId = manifest.applications.zotero.id;
@@ -62,6 +65,7 @@ test('version alignment across package, manifest, update.json, baseline, prefs.x
 	assert.equal(manifest.applications.zotero.strict_min_version, '10.0');
 	assert.equal(manifest.applications.zotero.strict_max_version, '12.*');
 	assert.ok(xhtml.includes(`"version":"${version}"`), 'prefs.xhtml must include aligned version arg');
+	assert.ok(readme.includes(`v${version}`), 'README must announce the aligned version');
 });
 
 test('Fluent catalogues are symmetric across en-US and zh-CN', () => {
@@ -72,6 +76,20 @@ test('Fluent catalogues are symmetric across en-US and zh-CN', () => {
 	assert.equal(new Set(zh).size, zh.length, 'duplicate keys in zh-CN');
 	assert.deepEqual(zh.filter((k) => !en.includes(k)), [], 'extra keys in zh-CN');
 	assert.deepEqual(en.filter((k) => !zh.includes(k)), [], 'missing keys in zh-CN');
+});
+
+test('all XUL menuitems in prefs.xhtml expose Fluent .label attributes', () => {
+	const xhtml = read('prefs.xhtml');
+	const itemKeys = [...xhtml.matchAll(/<menuitem[^>]*data-l10n-id="([^"]+)"/g)].map((m) => m[1]);
+	assert.ok(itemKeys.length > 0, 'prefs.xhtml must contain menuitem options');
+	for (const lang of ['en-US', 'zh-CN']) {
+		const ftl = read(`locale/${lang}/zotero-tabflow.ftl`);
+		for (const key of itemKeys) {
+			const blockRe = new RegExp(`^${key}\\s*=[^\\r\\n]*(?:\\r?\\n[ \\t]+\\.[a-z-]+\\s*=[^\\r\\n]*)*`, 'm');
+			const match = ftl.match(blockRe);
+			assert.ok(match && /\n[ \t]+\.label\s*=/m.test(match[0]), `${lang} FTL key "${key}" must define .label attribute for <menuitem>`);
+		}
+	}
 });
 
 test('all feature preferences in prefs.js are exposed in prefs.xhtml', () => {

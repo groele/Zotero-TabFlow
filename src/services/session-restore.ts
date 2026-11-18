@@ -155,7 +155,7 @@ export async function buildSessionRestorePlan(
 export async function executeSessionRestorePlan(
 	plan: SessionRestorePlan,
 	store: TabFlowStore,
-	openItem: (itemID: number) => Promise<void>,
+	openItem: (itemID: number) => Promise<void | boolean>,
 	openKeysNow: readonly string[],
 	isDisposed: () => boolean = () => false,
 ): Promise<void> {

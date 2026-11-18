@@ -81,7 +81,7 @@ export function renderPinnedStrip(
 		moreBtn.className = 'ztf-pinned-more';
 		moreBtn.textContent = `+${overflow.length}`;
 		moreBtn.title = t('zotero-tabflow-pinned-more-tip', `更多固定标签 (${overflow.length})`, { count: overflow.length });
-		moreBtn.onclick = () => openOverflowMenu(doc, moreBtn, overflow, selectedID, meta, actions);
+		moreBtn.onclick = () => openOverflowMenu(doc, moreBtn, overflow, selectedID, store, meta, actions);
 		strip.append(moreBtn);
 	}
 }
@@ -91,6 +91,7 @@ function openOverflowMenu(
 	anchor: Element,
 	overflow: readonly TrackedTab[],
 	selectedID: string,
+	store: TabFlowStore,
 	meta: ItemMetadataService,
 	actions: TabActionService,
 ): void {
@@ -104,10 +105,22 @@ function openOverflowMenu(
 	popup.addEventListener('popuphidden', (e: Event) => { if (e.target === popup) popup.remove(); });
 	for (const tab of overflow) {
 		const mi = xul('menuitem');
-		mi.setAttribute('label', `${tab.tab.id === selectedID ? '✓ ' : ''}${meta.getDisplayTitle(tab) === tab.title ? tab.title : `${tab.title}`}`);
+		mi.setAttribute('label', `${tab.tab.id === selectedID ? '✓ ' : ''}${meta.getDisplayTitle(tab) === tab.title ? tab.title : tab.title}`);
 		mi.addEventListener('command', () => actions.selectTab(tab.tab.id));
 		popup.append(mi);
 	}
+	popup.append(xul('menuseparator'));
+	const unpinMenu = xul('menu');
+	unpinMenu.setAttribute('label', t('zotero-tabflow-menu-unpin', '取消固定标签'));
+	const unpinPop = xul('menupopup');
+	unpinMenu.append(unpinPop);
+	for (const tab of overflow) {
+		const mi = xul('menuitem');
+		mi.setAttribute('label', tab.title);
+		mi.addEventListener('command', () => store.togglePinned(tab.key));
+		unpinPop.append(mi);
+	}
+	popup.append(unpinMenu);
 	const win = doc.defaultView as any;
 	const rect = anchor.getBoundingClientRect();
 	popup.openPopupAtScreen((win?.mozInnerScreenX || 0) + rect.left, (win?.mozInnerScreenY || 0) + rect.bottom, true);

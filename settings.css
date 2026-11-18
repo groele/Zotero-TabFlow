@@ -16,6 +16,18 @@
   font-family: system-ui, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
   font-size: 14px;
   line-height: 1.55;
+  container: tabflow-settings / inline-size;
+}
+
+#zotero-prefpane-zotero-tabflow label,
+#zotero-prefpane-zotero-tabflow checkbox,
+#zotero-prefpane-zotero-tabflow menulist,
+#zotero-prefpane-zotero-tabflow select,
+#zotero-prefpane-zotero-tabflow input:not([type="checkbox"]):not([type="radio"]),
+#zotero-prefpane-zotero-tabflow button {
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 #zotero-prefpane-zotero-tabflow .tabflow-settings-header {
@@ -114,8 +126,19 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
   margin-inline-start: 24px;
   margin-top: 8px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-subordinate-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--flow-pref-text);
+  overflow-wrap: anywhere;
 }
 
 #zotero-prefpane-zotero-tabflow .tabflow-subordinate-stack {
@@ -131,19 +154,82 @@
   margin-top: 2px;
 }
 
+#zotero-prefpane-zotero-tabflow menulist,
+#zotero-prefpane-zotero-tabflow select,
+#zotero-prefpane-zotero-tabflow .html-input {
+  box-sizing: border-box;
+  appearance: auto;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 32px;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--flow-pref-border);
+  border-radius: 5px;
+  color: var(--flow-pref-text);
+  background-color: Field;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-subordinate-row > menulist,
+#zotero-prefpane-zotero-tabflow .tabflow-subordinate-row > select {
+  flex: 0 1 280px;
+  width: min(100%, 280px);
+  min-width: 190px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-subordinate-row > .html-input {
+  flex: 0 0 96px;
+  width: 96px;
+  text-align: end;
+}
+
+#zotero-prefpane-zotero-tabflow menupopup {
+  min-width: 220px;
+}
+
+#zotero-prefpane-zotero-tabflow menuitem {
+  white-space: nowrap;
+  font-size: 14px;
+}
+
 #zotero-prefpane-zotero-tabflow .tabflow-field-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  min-width: 0;
 }
 
 #zotero-prefpane-zotero-tabflow .tabflow-field-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  padding: 9px 12px;
   border: 1px solid var(--flow-pref-border);
-  border-radius: 6px;
+  border-radius: 7px;
+  background-color: color-mix(in srgb, currentColor 2.5%, transparent);
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-field-card > label {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--flow-pref-text);
+  overflow-wrap: anywhere;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-field-card > menulist,
+#zotero-prefpane-zotero-tabflow .tabflow-field-card > select,
+#zotero-prefpane-zotero-tabflow .tabflow-field-card > .html-input {
+  width: 100%;
+  min-width: 0;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-field-card > input[type="number"] {
+  text-align: end;
 }
 
 #zotero-prefpane-zotero-tabflow .tabflow-action-split {
@@ -153,7 +239,57 @@
   gap: 12px;
 }
 
-#zotero-prefpane-zotero-tabflow [data-disabled="true"] {
+#zotero-prefpane-zotero-tabflow .tabflow-settings-card button {
+  box-sizing: border-box;
+  appearance: auto;
+  min-height: 30px;
+  padding: 5px 12px;
+  border: 1px solid var(--flow-pref-border);
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--flow-pref-text);
+  background: color-mix(in srgb, currentColor 3%, transparent);
+  cursor: pointer;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-card button:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+#zotero-prefpane-zotero-tabflow menulist:focus-visible,
+#zotero-prefpane-zotero-tabflow select:focus-visible,
+#zotero-prefpane-zotero-tabflow .html-input:focus-visible,
+#zotero-prefpane-zotero-tabflow button:focus-visible {
+  outline: 2px solid var(--flow-pref-accent);
+  outline-offset: 2px;
+}
+
+#zotero-prefpane-zotero-tabflow [data-disabled="true"],
+#zotero-prefpane-zotero-tabflow menulist[disabled="true"],
+#zotero-prefpane-zotero-tabflow input:disabled {
   opacity: 0.5;
   pointer-events: none;
+}
+
+@container tabflow-settings (max-width: 480px) {
+  #zotero-prefpane-zotero-tabflow .tabflow-subordinate-row {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  #zotero-prefpane-zotero-tabflow .tabflow-subordinate-row > menulist,
+  #zotero-prefpane-zotero-tabflow .tabflow-subordinate-row > select {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@container tabflow-settings (max-width: 420px) {
+  #zotero-prefpane-zotero-tabflow .tabflow-field-grid,
+  #zotero-prefpane-zotero-tabflow .tabflow-action-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

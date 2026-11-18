@@ -102,12 +102,11 @@ export class TabFlowStore {
 	}
 
 	orderedGroups(): TabGroup[] {
-		const all: TabGroup[] = [
-			{ id: '', name: this.state.ungroupedName || t('zotero-tabflow-ungrouped', '未分组'), color: this.state.ungroupedColor || '#737373' },
-			...this.state.groups,
-		];
-		const order = [...new Set([...(this.state.order || []), ...all.map((g) => g.id)])];
-		return order.map((id) => all.find((g) => g.id === id)).filter((g): g is TabGroup => Boolean(g));
+		const byId = new Map(this.state.groups.map((group) => [group.id, group]));
+		const name = this.state.ungroupedName || t('zotero-tabflow-ungrouped', '未分组');
+		byId.set('', { id: '', name, color: this.state.ungroupedColor || '#737373' });
+		const order = [...new Set([...(this.state.order || []), ...byId.keys()])];
+		return order.map((id) => byId.get(id)).filter((g): g is TabGroup => Boolean(g));
 	}
 
 	visibleGroups(): TabGroup[] {
@@ -179,15 +178,15 @@ export class TabFlowStore {
 		this.save();
 	}
 
-	dissolveGroup(id: string): void {
-		this.state.groups = this.state.groups.filter((g) => g.id !== id);
-		for (const key of Object.keys(this.state.assignments)) {
-			if (this.state.assignments[key] === id) delete this.state.assignments[key];
-		}
+	dissolveGroup(id: string): boolean {
+		if (!id || this.readOnly || !this.state.groups.some((group) => group.id === id)) return false;
+		this.state.groups = this.state.groups.filter((group) => group.id !== id);
+		this.state.assignments = Object.fromEntries(Object.entries(this.state.assignments).filter(([, groupId]) => groupId !== id));
 		this.state.order = this.state.order.filter((x) => x !== id);
 		this.state.collapsed = this.state.collapsed.filter((x) => x !== id);
 		delete this.state.groupDisplay[id];
 		this.save();
+		return true;
 	}
 
 	setGroupColor(id: string, rawColor: string): boolean {

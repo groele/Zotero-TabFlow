@@ -10,6 +10,14 @@ function setSubtreeDisabled(el: Element | null, disabled: boolean): void {
 	});
 }
 
+function syncMenulistLabels(doc: Document): void {
+	doc.querySelectorAll('#zotero-prefpane-zotero-tabflow menulist').forEach((ml: Element) => {
+		const selected = (ml as { selectedItem?: Element | null }).selectedItem;
+		const lbl = selected?.getAttribute?.('label');
+		if (lbl) ml.setAttribute('label', lbl);
+	});
+}
+
 function updateDependencies(doc: Document): void {
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-compactTopBar'), !getPref('enableHorizontalGroups') || !getPref('enableVerticalSidebar'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-enableBatchSelection'), !getPref('enableVerticalSidebar'));
@@ -20,6 +28,7 @@ function updateDependencies(doc: Document): void {
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-autoSleepMinutes'), !getPref('enableTabSleep'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-staleSuggestDays'), !getPref('enableStaleSuggestions'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-tabContextActions'), !getPref('enableTabContextMenu'));
+	syncMenulistLabels(doc);
 }
 
 const TabFlowPreferences = {
@@ -28,6 +37,7 @@ const TabFlowPreferences = {
 	init(win?: Window): void {
 		const doc = win?.document || document;
 		updateDependencies(doc);
+		(doc as { l10n?: { ready?: Promise<unknown> } }).l10n?.ready?.then?.(() => syncMenulistLabels(doc));
 
 		const pane = doc.getElementById('zotero-prefpane-zotero-tabflow');
 		pane?.addEventListener('command', () => updateDependencies(doc));

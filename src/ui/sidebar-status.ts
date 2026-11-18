@@ -97,3 +97,56 @@ export function renderSidebarEmptyState(
 	box.append(msg, btn);
 	list.append(box);
 }
+
+export function buildSidebarSection(
+	doc: Document,
+	collapsedSet: Set<string>,
+	id: string,
+	title: string,
+	color: string,
+	count: number,
+	onConvertToGroup?: () => void,
+): HTMLElement {
+	const collapsed = collapsedSet.has(id);
+	const wrap = doc.createElementNS(XHTML, 'div') as HTMLDivElement;
+	wrap.className = 'ztf-sb-group';
+	const headRow = doc.createElementNS(XHTML, 'div') as HTMLDivElement;
+	headRow.className = 'ztf-sb-group-head-row';
+	const head = doc.createElementNS(XHTML, 'button') as HTMLButtonElement;
+	head.type = 'button';
+	head.className = 'ztf-sb-group-head';
+	head.dataset.ztfNav = 'head';
+	head.dataset.ztfNavId = id;
+	const arrow = doc.createElementNS(XHTML, 'span');
+	arrow.className = 'ztf-sb-caret';
+	arrow.textContent = collapsed ? '▸' : '▾';
+	const dot = doc.createElementNS(XHTML, 'span') as HTMLSpanElement;
+	dot.className = 'ztf-sb-dot';
+	dot.style.background = color;
+	const txt = doc.createElementNS(XHTML, 'span');
+	txt.className = 'ztf-sb-group-title';
+	txt.textContent = `${title} (${count})`;
+	const body = doc.createElementNS(XHTML, 'div') as HTMLDivElement;
+	body.className = 'ztf-sb-group-body';
+	body.hidden = collapsed;
+	head.onclick = () => {
+		const next = !collapsedSet.has(id);
+		if (next) collapsedSet.add(id);
+		else collapsedSet.delete(id);
+		arrow.textContent = next ? '▸' : '▾';
+		body.hidden = next;
+	};
+	head.append(arrow, dot, txt);
+	headRow.append(head);
+	if (onConvertToGroup) {
+		const conv = doc.createElementNS(XHTML, 'button') as HTMLButtonElement;
+		conv.type = 'button';
+		conv.className = 'ztf-sb-col-group-btn';
+		conv.textContent = '+';
+		conv.title = t('zotero-tabflow-collection-to-group-tip', '将该集合当前标签转为独立分组');
+		conv.onclick = (e: Event) => { e.stopPropagation(); onConvertToGroup(); };
+		headRow.append(conv);
+	}
+	wrap.append(headRow, body);
+	return wrap;
+}

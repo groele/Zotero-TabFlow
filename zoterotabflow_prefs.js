@@ -83,6 +83,13 @@
       else ctrl.removeAttribute("disabled");
     });
   }
+  function syncMenulistLabels(doc) {
+    doc.querySelectorAll("#zotero-prefpane-zotero-tabflow menulist").forEach((ml) => {
+      const selected = ml.selectedItem;
+      const lbl = selected?.getAttribute?.("label");
+      if (lbl) ml.setAttribute("label", lbl);
+    });
+  }
   function updateDependencies(doc) {
     setSubtreeDisabled(doc.getElementById("tabflow-sub-compactTopBar"), !getPref("enableHorizontalGroups") || !getPref("enableVerticalSidebar"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-enableBatchSelection"), !getPref("enableVerticalSidebar"));
@@ -93,12 +100,14 @@
     setSubtreeDisabled(doc.getElementById("tabflow-sub-autoSleepMinutes"), !getPref("enableTabSleep"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-staleSuggestDays"), !getPref("enableStaleSuggestions"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-tabContextActions"), !getPref("enableTabContextMenu"));
+    syncMenulistLabels(doc);
   }
   var TabFlowPreferences = {
     observerIDs: [],
     init(win) {
       const doc = win?.document || document;
       updateDependencies(doc);
+      doc.l10n?.ready?.then?.(() => syncMenulistLabels(doc));
       const pane = doc.getElementById("zotero-prefpane-zotero-tabflow");
       pane?.addEventListener("command", () => updateDependencies(doc));
       pane?.addEventListener("change", () => updateDependencies(doc));

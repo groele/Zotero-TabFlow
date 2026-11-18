@@ -1,3 +1,4 @@
+import { parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
 import { t } from '../core/i18n.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { TrackedTab, VirtualMemberMeta } from '../core/types.ts';
@@ -21,6 +22,8 @@ export interface SidebarRowDeps {
 	onRefresh: () => void;
 	getDraggedKey: () => string | null;
 	setDraggedKey: (key: string | null) => void;
+	getDraggedTabId: () => string | null;
+	setDraggedTabId: (id: string | null) => void;
 }
 
 export function buildSidebarVirtualRow(deps: SidebarRowDeps, v: VirtualMemberMeta, groupId: string): HTMLElement {
@@ -85,23 +88,51 @@ export function buildSidebarTabRow(deps: SidebarRowDeps, item: TrackedTab, selec
 	row.oncontextmenu = (e: Event) => deps.menus.openTabMenu(e as MouseEvent, item);
 	row.onmouseenter = () => deps.hoverCard.show(row, item);
 	row.onmouseleave = () => deps.hoverCard.hide();
-	row.ondragstart = () => deps.setDraggedKey(item.key);
+	row.ondragstart = () => {
+		deps.setDraggedKey(item.key);
+		deps.setDraggedTabId(item.tab.id);
+	};
 	row.ondragover = (e: Event) => {
 		const dragged = deps.getDraggedKey();
-		if (!dragged || dragged === item.key) return;
+		const extIds = !dragged ? parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer) : [];
+		if ((!dragged || dragged === item.key) && !extIds.length) return;
 		e.preventDefault();
-		row.setAttribute('data-ztf-drop', 'join');
+		if (extIds.length) {
+			row.setAttribute('data-ztf-drop', 'join');
+			return;
+		}
+		const rect = row.getBoundingClientRect();
+		const ratio = rect.height > 0 ? ((e as MouseEvent).clientY - rect.top) / rect.height : 0.5;
+		row.setAttribute('data-ztf-drop', ratio < 0.28 ? 'before' : ratio > 0.72 ? 'after' : 'join');
 	};
 	row.ondragleave = () => row.removeAttribute('data-ztf-drop');
 	row.ondrop = (e: Event) => {
 		e.preventDefault();
+		const zone = row.getAttribute('data-ztf-drop') || 'join';
 		row.removeAttribute('data-ztf-drop');
 		const dragged = deps.getDraggedKey();
-		if (!dragged || dragged === item.key) return;
-		deps.store.assignKey(dragged, item.groupId);
-		deps.setDraggedKey(null);
-		deps.onRefresh();
+		const draggedTabId = deps.getDraggedTabId();
+		if (dragged && dragged !== item.key) {
+			deps.store.assignKey(dragged, item.groupId);
+			if ((zone === 'before' || zone === 'after') && draggedTabId) {
+				deps.actions.moveTabRelative(draggedTabId, item.tab.id, zone === 'after');
+			}
+			deps.setDraggedKey(null);
+			deps.setDraggedTabId(null);
+			deps.onRefresh();
+			return;
+		}
+		const extIds = parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer);
+		if (extIds.length) {
+			void (async () => {
+				for (const id of extIds) await deps.actions.openVirtualOrItem(id, item.groupId);
+				deps.onRefresh();
+			})();
+		}
 	};
-	row.ondragend = () => deps.setDraggedKey(null);
+	row.ondragend = () => {
+		deps.setDraggedKey(null);
+		deps.setDraggedTabId(null);
+	};
 	return row;
 }
