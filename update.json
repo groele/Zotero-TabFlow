@@ -1,0 +1,19 @@
+{
+  "addons": {
+    "zotero-tabflow@groele": {
+      "updates": [
+        {
+          "version": "17.1.0",
+          "update_link": "https://github.com/groele/Zotero-TabFlow/releases/download/v17.1.0/Zotero-TabFlow-17.1.0.xpi",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "10.0",
+              "strict_max_version": "12.*"
+            }
+          },
+          "update_hash": "sha512:1cfba5213430391026810688c7f1ced61d9285ca8aeb981ca318a36ea07224af07274dbf85a791ecce00470d737a8a092f0326198aebadeb7582b18cc3375004"
+        }
+      ]
+    }
+  }
+}

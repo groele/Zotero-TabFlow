@@ -1,0 +1,154 @@
+/* Zotero TabFlow - Preferences Visual Language (40px Golden Baseline) */
+#zotero-prefpane-zotero-tabflow.tabflow-settings {
+  --flow-pref-text: var(--fill-primary, light-dark(#262626, #eeeeee));
+  --flow-pref-muted: light-dark(#555555, #cccccc);
+  --flow-pref-accent: light-dark(#245ac7, #9bbcff);
+  --flow-pref-border: color-mix(in srgb, currentColor 18%, transparent);
+  --flow-pref-divider: color-mix(in srgb, currentColor 12%, transparent);
+  --flow-pref-surface: color-mix(in srgb, currentColor 2%, transparent);
+  box-sizing: border-box;
+  display: block;
+  width: min(100%, 780px);
+  min-width: 0;
+  margin-inline: auto;
+  padding: 10px 14px 20px;
+  color: var(--flow-pref-text);
+  font-family: system-ui, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-header {
+  margin: 0 0 14px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--flow-pref-divider);
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-version-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--flow-pref-border);
+  border-radius: 4px;
+  background: var(--flow-pref-surface);
+  color: var(--flow-pref-muted);
+  font-size: 12px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-header > p {
+  margin: 4px 0 0;
+  color: var(--flow-pref-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-card {
+  display: block;
+  margin-block: 0 10px;
+  padding: 16px;
+  border: 1px solid var(--flow-pref-border);
+  border-radius: 9px;
+  background: var(--flow-pref-surface);
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-card > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -16px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-card[open] > summary {
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--flow-pref-divider);
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-card-lead {
+  margin-inline-start: 0;
+  margin-bottom: 10px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-subgroup {
+  margin-top: 12px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-subgroup-title {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-settings-description {
+  display: block;
+  color: var(--flow-pref-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Level 3: 24px indent aligns with 40px Golden Line (16px card padding + 24px) */
+#zotero-prefpane-zotero-tabflow .tabflow-subordinate {
+  margin-inline-start: 24px;
+  margin-top: 2px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-subordinate-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-inline-start: 24px;
+  margin-top: 8px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-subordinate-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-inline-start: 24px;
+  margin-top: 8px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-field-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--flow-pref-border);
+  border-radius: 6px;
+}
+
+#zotero-prefpane-zotero-tabflow .tabflow-action-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+#zotero-prefpane-zotero-tabflow [data-disabled="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}

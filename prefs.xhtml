@@ -1,0 +1,217 @@
+<!-- Zotero TabFlow settings. Aligned with Zotero Flow 40px golden baseline. -->
+<linkset>
+    <html:link rel="localization" href="zotero-tabflow.ftl"/>
+</linkset>
+
+<vbox id="zotero-prefpane-zotero-tabflow" class="tabflow-settings">
+    <html:header class="tabflow-settings-header">
+        <html:div class="tabflow-settings-title-row">
+            <html:h1 data-l10n-id="zotero-tabflow-settings-heading"></html:h1>
+            <html:span id="tabflow-version-badge" data-l10n-id="zotero-tabflow-version-badge" data-l10n-args='{"version":"17.1.0"}' class="tabflow-version-badge"></html:span>
+        </html:div>
+        <html:p data-l10n-id="zotero-tabflow-settings-intro"></html:p>
+    </html:header>
+
+    <!-- Card 1: Core Layout & Workspace Toggles (only card open by default) -->
+    <html:details class="tabflow-settings-card" open="open">
+        <html:summary>
+            <html:span data-l10n-id="zotero-tabflow-card-layout-heading"></html:span>
+        </html:summary>
+        <html:div class="tabflow-settings-card-content">
+            <description class="tabflow-settings-description tabflow-card-lead" data-l10n-id="zotero-tabflow-card-layout-intro"></description>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableHorizontalGroups" preference="extensions.zotero.tabflow.enableHorizontalGroups" native="true" data-l10n-id="zotero-tabflow-pref-enable-horizontal-groups"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-horizontal-groups-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableVerticalSidebar" preference="extensions.zotero.tabflow.enableVerticalSidebar" native="true" data-l10n-id="zotero-tabflow-pref-enable-vertical-sidebar"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-vertical-sidebar-desc"></description>
+                <hbox id="tabflow-sub-enableBatchSelection" class="tabflow-subordinate-row">
+                    <checkbox id="tabflow-pref-enableBatchSelection" preference="extensions.zotero.tabflow.enableBatchSelection" native="true" data-l10n-id="zotero-tabflow-pref-enable-batch-selection"/>
+                </hbox>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enablePinnedTabs" preference="extensions.zotero.tabflow.enablePinnedTabs" native="true" data-l10n-id="zotero-tabflow-pref-enable-pinned-tabs"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-pinned-tabs-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableVirtualMembers" preference="extensions.zotero.tabflow.enableVirtualMembers" native="true" data-l10n-id="zotero-tabflow-pref-enable-virtual-members"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-virtual-members-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableCollectionAutoGroup" preference="extensions.zotero.tabflow.enableCollectionAutoGroup" native="true" data-l10n-id="zotero-tabflow-pref-enable-collection-autogroup"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-collection-autogroup-desc"></description>
+                <html:div id="tabflow-sub-multiCollectionStrategy" class="tabflow-subordinate-row">
+                    <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-multi-collection-strategy" control="tabflow-pref-multiCollectionStrategy"></label>
+                    <menulist id="tabflow-pref-multiCollectionStrategy" native="true" preference="extensions.zotero.tabflow.multiCollectionStrategy">
+                        <menupopup>
+                            <menuitem value="active" data-l10n-id="zotero-tabflow-strategy-active"/>
+                            <menuitem value="existing" data-l10n-id="zotero-tabflow-strategy-existing"/>
+                            <menuitem value="first" data-l10n-id="zotero-tabflow-strategy-first"/>
+                        </menupopup>
+                    </menulist>
+                </html:div>
+            </html:div>
+        </html:div>
+    </html:details>
+
+    <!-- Card 2: Remarks, Typography & Hover Preview -->
+    <html:details class="tabflow-settings-card">
+        <html:summary>
+            <html:span data-l10n-id="zotero-tabflow-card-display-heading"></html:span>
+        </html:summary>
+        <html:div class="tabflow-settings-card-content">
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableTabRemarks" preference="extensions.zotero.tabflow.enableTabRemarks" native="true" data-l10n-id="zotero-tabflow-pref-enable-tab-remarks"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-tab-remarks-desc"></description>
+                <html:div id="tabflow-sub-remarkDisplayMode" class="tabflow-subordinate-row">
+                    <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-remark-display-mode" control="tabflow-pref-remarkDisplayMode"></label>
+                    <menulist id="tabflow-pref-remarkDisplayMode" native="true" preference="extensions.zotero.tabflow.remarkDisplayMode">
+                        <menupopup>
+                            <menuitem value="both" data-l10n-id="zotero-tabflow-display-both"/>
+                            <menuitem value="note" data-l10n-id="zotero-tabflow-display-note"/>
+                            <menuitem value="original" data-l10n-id="zotero-tabflow-display-original"/>
+                        </menupopup>
+                    </menulist>
+                </html:div>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableHoverPreview" preference="extensions.zotero.tabflow.enableHoverPreview" native="true" data-l10n-id="zotero-tabflow-pref-enable-hover-preview"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-hover-preview-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <label class="tabflow-subgroup-title" data-l10n-id="zotero-tabflow-pref-vertical-typography"></label>
+                <html:div class="tabflow-field-grid">
+                    <html:div class="tabflow-field-card">
+                        <label data-l10n-id="zotero-tabflow-pref-title-mode" control="tabflow-pref-verticalTabTitleMode"></label>
+                        <menulist id="tabflow-pref-verticalTabTitleMode" native="true" preference="extensions.zotero.tabflow.verticalTabTitleMode">
+                            <menupopup>
+                                <menuitem value="title" data-l10n-id="zotero-tabflow-title-full"/>
+                                <menuitem value="shortTitle" data-l10n-id="zotero-tabflow-title-short"/>
+                                <menuitem value="filename" data-l10n-id="zotero-tabflow-title-filename"/>
+                            </menupopup>
+                        </menulist>
+                    </html:div>
+                    <html:div class="tabflow-field-card">
+                        <label data-l10n-id="zotero-tabflow-pref-subtitle-mode" control="tabflow-pref-verticalTabSubtitleMode"></label>
+                        <menulist id="tabflow-pref-verticalTabSubtitleMode" native="true" preference="extensions.zotero.tabflow.verticalTabSubtitleMode">
+                            <menupopup>
+                                <menuitem value="source" data-l10n-id="zotero-tabflow-subtitle-source"/>
+                                <menuitem value="creatorYear" data-l10n-id="zotero-tabflow-subtitle-creator-year"/>
+                                <menuitem value="collection" data-l10n-id="zotero-tabflow-subtitle-collection"/>
+                                <menuitem value="none" data-l10n-id="zotero-tabflow-subtitle-none"/>
+                            </menupopup>
+                        </menulist>
+                    </html:div>
+                    <html:div class="tabflow-field-card">
+                        <label data-l10n-id="zotero-tabflow-pref-row-height" control="tabflow-pref-verticalTabRowHeight"></label>
+                        <html:input class="html-input" id="tabflow-pref-verticalTabRowHeight" type="number" min="32" max="80" step="1" data-preference="extensions.zotero.tabflow.verticalTabRowHeight"/>
+                    </html:div>
+                    <html:div class="tabflow-field-card">
+                        <label data-l10n-id="zotero-tabflow-pref-font-size" control="tabflow-pref-verticalTabFontSize"></label>
+                        <html:input class="html-input" id="tabflow-pref-verticalTabFontSize" type="number" min="10" max="22" step="1" data-preference="extensions.zotero.tabflow.verticalTabFontSize"/>
+                    </html:div>
+                </html:div>
+            </html:div>
+        </html:div>
+    </html:details>
+
+    <!-- Card 3: Productivity Tools, Tab Sleep & Stale Cleanup -->
+    <html:details class="tabflow-settings-card">
+        <html:summary>
+            <html:span data-l10n-id="zotero-tabflow-card-productivity-heading"></html:span>
+        </html:summary>
+        <html:div class="tabflow-settings-card-content">
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableSpotlight" preference="extensions.zotero.tabflow.enableSpotlight" native="true" data-l10n-id="zotero-tabflow-pref-enable-spotlight"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-spotlight-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableSessions" preference="extensions.zotero.tabflow.enableSessions" native="true" data-l10n-id="zotero-tabflow-pref-enable-sessions"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-sessions-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableTabSleep" preference="extensions.zotero.tabflow.enableTabSleep" native="true" data-l10n-id="zotero-tabflow-pref-enable-tab-sleep"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-tab-sleep-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableStaleSuggestions" preference="extensions.zotero.tabflow.enableStaleSuggestions" native="true" data-l10n-id="zotero-tabflow-pref-enable-stale-suggestions"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-stale-suggestions-desc"></description>
+                <html:div id="tabflow-sub-staleSuggestDays" class="tabflow-subordinate-row">
+                    <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-stale-days" control="tabflow-pref-staleSuggestDays"></label>
+                    <html:input class="html-input" id="tabflow-pref-staleSuggestDays" type="number" min="1" max="3650" step="1" data-preference="extensions.zotero.tabflow.staleSuggestDays"/>
+                </html:div>
+            </html:div>
+        </html:div>
+    </html:details>
+
+    <!-- Card 4: Context Menu Enhancements -->
+    <html:details class="tabflow-settings-card">
+        <html:summary>
+            <html:span data-l10n-id="zotero-tabflow-card-menus-heading"></html:span>
+        </html:summary>
+        <html:div class="tabflow-settings-card-content">
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableTabContextMenu" preference="extensions.zotero.tabflow.enableTabContextMenu" native="true" data-l10n-id="zotero-tabflow-pref-enable-tab-context-menu"/>
+                <html:div id="tabflow-sub-tabContextActions" class="tabflow-subordinate-stack">
+                    <checkbox id="tabflow-pref-enableCopyReference" preference="extensions.zotero.tabflow.enableCopyReference" native="true" data-l10n-id="zotero-tabflow-pref-enable-copy-reference"/>
+                    <checkbox id="tabflow-pref-enableShowInFilesystem" preference="extensions.zotero.tabflow.enableShowInFilesystem" native="true" data-l10n-id="zotero-tabflow-pref-enable-show-in-filesystem"/>
+                    <checkbox id="tabflow-pref-enableReloadTab" preference="extensions.zotero.tabflow.enableReloadTab" native="true" data-l10n-id="zotero-tabflow-pref-enable-reload-tab"/>
+                </html:div>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enableItemContextMenu" preference="extensions.zotero.tabflow.enableItemContextMenu" native="true" data-l10n-id="zotero-tabflow-pref-enable-item-context-menu"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-item-context-menu-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enablePdfFolderSidenav" preference="extensions.zotero.tabflow.enablePdfFolderSidenav" native="true" data-l10n-id="zotero-tabflow-pref-enable-pdf-folder-sidenav"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-pdf-folder-sidenav-desc"></description>
+            </html:div>
+        </html:div>
+    </html:details>
+
+    <!-- Card 5: Diagnostics & Reset -->
+    <html:details class="tabflow-settings-card">
+        <html:summary>
+            <html:span data-l10n-id="zotero-tabflow-card-maintenance-heading"></html:span>
+        </html:summary>
+        <html:div class="tabflow-settings-card-content">
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-debug" preference="extensions.zotero.tabflow.debug" native="true" data-l10n-id="zotero-tabflow-pref-debug"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-debug-desc"></description>
+            </html:div>
+
+            <html:div class="tabflow-subgroup tabflow-action-split">
+                <html:div class="tabflow-action-copy">
+                    <label class="tabflow-subgroup-title" data-l10n-id="zotero-tabflow-reset-prefs-heading"></label>
+                    <description class="tabflow-settings-description" data-l10n-id="zotero-tabflow-reset-prefs-desc"></description>
+                </html:div>
+                <html:div class="tabflow-action-side">
+                    <button id="tabflow-reset-prefs-btn" native="true" data-l10n-id="zotero-tabflow-reset-prefs-btn"></button>
+                </html:div>
+            </html:div>
+
+            <html:div class="tabflow-subgroup tabflow-action-split">
+                <html:div class="tabflow-action-copy">
+                    <label class="tabflow-subgroup-title" data-l10n-id="zotero-tabflow-clear-state-heading"></label>
+                    <description class="tabflow-settings-description" data-l10n-id="zotero-tabflow-clear-state-desc"></description>
+                </html:div>
+                <html:div class="tabflow-action-side">
+                    <button id="tabflow-clear-state-btn" native="true" data-l10n-id="zotero-tabflow-clear-state-btn"></button>
+                </html:div>
+            </html:div>
+        </html:div>
+    </html:details>
+</vbox>
