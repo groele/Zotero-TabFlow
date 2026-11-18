@@ -34,6 +34,68 @@ const { partitionPinnedOverflow } = require('../src/ui/pinned-strip.ts');
 const { computeNextNavIndex, isEditableKeyboardTarget } = require('../src/ui/sidebar-keyboard.ts');
 const { computeWorkspaceStatusCounts } = require('../src/ui/sidebar-status.ts');
 
+test('hidden project keeps assignments, virtual members and pins after reloading', () => {
+	memPrefs.clear();
+	const store = new TabFlowStore();
+	const group = store.ensureGroup('Completed project');
+	store.assignKey('1:ABC', group.id);
+	store.setRemark('1:ABC', 'Keep this note');
+	store.setPinnedKeys(['1:ABC'], true);
+	store.setCollapsed(group.id, true);
+	store.setGroupHidden(group.id, true, [{ key: '1:ABC', itemID: 42 }]);
+	const reloaded = new TabFlowStore();
+	reloaded.load();
+	assert.deepEqual(reloaded.hiddenGroups().map((g) => g.id), [group.id]);
+	assert.ok(!reloaded.visibleGroups().some((g) => g.id === group.id));
+	assert.equal(reloaded.groupOfKey('1:ABC'), group.id);
+	assert.equal(reloaded.getRemark('1:ABC').note, 'Keep this note');
+	assert.equal(reloaded.state.virtualMembers['1:ABC'].itemID, 42);
+	assert.ok(reloaded.isPinned('1:ABC'));
+	assert.ok(reloaded.state.collapsed.includes(group.id));
+	setPref('enableGroupHiding', false);
+	assert.ok(reloaded.visibleGroups().some((g) => g.id === group.id));
+	setPref('enableGroupHiding', true);
+	reloaded.setGroupHidden(group.id, false);
+	assert.deepEqual(reloaded.hiddenGroups(), []);
+	assert.ok(reloaded.visibleGroups().some((g) => g.id === group.id));
+});
+
+test('hiding a named ungrouped section promotes its members without hiding the ungrouped area', () => {
+	memPrefs.clear();
+	const store = new TabFlowStore();
+	store.renameGroup('', 'hello');
+	store.setGroupColor('', '#123456');
+	store.setCollapsed('', true);
+	const existing = store.ensureGroup('hello');
+	store.assignKey('1:OTHER', existing.id);
+	store.state.virtualMembers['1:VIRTUAL'] = { key: '1:VIRTUAL', itemID: 7 };
+	store.hideNamedUngrouped(['1:OPEN', '1:OTHER']);
+	const [project] = store.hiddenGroups();
+	assert.equal(project.name, 'hello (2)');
+	assert.equal(project.color, '#123456');
+	assert.equal(store.groupOfKey('1:OPEN'), project.id);
+	assert.equal(store.groupOfKey('1:VIRTUAL'), project.id);
+	assert.equal(store.groupOfKey('1:OTHER'), existing.id);
+	assert.equal(store.groupOfKey('1:NEW'), '');
+	assert.ok(store.visibleGroups().some((g) => g.id === ''));
+	assert.ok(store.state.collapsed.includes(project.id));
+	assert.equal(store.state.ungroupedName, undefined);
+});
+
+test('collection auto-grouping leaves new tabs visible when a matching group is hidden', () => {
+	memPrefs.clear();
+	const store = new TabFlowStore();
+	const old = store.ensureGroup('Completed');
+	store.setGroupHidden(old.id, true);
+	const meta = { buildTrackedTabs: () => [{ tab: { id: 'new' }, key: '1:NEW', groupId: '', collection: 'Completed' }] };
+	const actions = new TabActionService({}, store, meta);
+	assert.equal(actions.autoGroupByCollection(), 0);
+	assert.equal(store.groupOfKey('1:NEW'), '');
+	store.setGroupHidden(old.id, false);
+	assert.equal(actions.autoGroupByCollection(), 1);
+	assert.equal(store.groupOfKey('1:NEW'), old.id);
+});
+
 test('session restore plan previews open, missing, reassigned, pin diffs and saves pre-replace backup', async () => {
 	memPrefs.clear();
 	const store = new TabFlowStore();

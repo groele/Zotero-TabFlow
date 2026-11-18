@@ -5,6 +5,7 @@
   var PREF_PREFIX = "extensions.zotero.tabflow.";
   var DEFAULT_PREFS = {
     enableHorizontalGroups: true,
+    enableGroupHiding: true,
     compactTopBar: false,
     enableVerticalSidebar: true,
     enableBatchSelection: true,
@@ -261,15 +262,54 @@
       const order = [.../* @__PURE__ */ new Set([...this.state.order || [], ...all.map((g) => g.id)])];
       return order.map((id) => all.find((g) => g.id === id)).filter((g) => Boolean(g));
     }
+    visibleGroups() {
+      const groups = this.orderedGroups();
+      return getPref("enableGroupHiding") ? groups.filter((group) => group.hidden !== true) : groups;
+    }
+    hiddenGroups() {
+      return getPref("enableGroupHiding") ? this.orderedGroups().filter((group) => group.hidden === true) : [];
+    }
+    setGroupHidden(id, hidden, members = []) {
+      const group = this.state.groups.find((candidate) => candidate.id === id);
+      if (!group || group.hidden === true === hidden || this.readOnly) return;
+      if (hidden) {
+        group.hidden = true;
+        for (const member of members) this.state.virtualMembers[member.key] = member;
+      } else delete group.hidden;
+      this.save();
+    }
+    hideNamedUngrouped(openKeys, members = []) {
+      const originalName = this.state.ungroupedName;
+      if (!originalName || this.readOnly) return;
+      const keys = [.../* @__PURE__ */ new Set([...openKeys, ...Object.keys(this.state.virtualMembers)])].filter((key) => !this.groupOfKey(key));
+      if (!keys.length) return;
+      let name = originalName;
+      for (let i = 2; this.state.groups.some((g) => g.name === name); i++) {
+        const suffix = ` (${i})`;
+        name = originalName.slice(0, 60 - suffix.length) + suffix;
+      }
+      const group = this.addGroup(name, this.state.ungroupedColor);
+      group.hidden = true;
+      for (const key of keys) this.state.assignments[key] = group.id;
+      for (const member of members) this.state.virtualMembers[member.key] = member;
+      if (this.state.collapsed.includes("")) this.state.collapsed = [...this.state.collapsed.filter(Boolean), group.id];
+      if (this.state.groupDisplay[""]) this.state.groupDisplay[group.id] = this.state.groupDisplay[""];
+      delete this.state.ungroupedName;
+      this.save();
+    }
     ensureGroup(name) {
       const clean = name.trim().slice(0, 60) || t("zotero-tabflow-default-group-name", "新分组");
       const existing = this.state.groups.find((g) => g.name === clean);
       if (existing) return existing;
+      const group = this.addGroup(clean, AUTO_COLORS[this.state.groups.length % AUTO_COLORS.length]);
+      this.save();
+      return group;
+    }
+    addGroup(name, color) {
       const id = `g-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const group = { id, name: clean, color: AUTO_COLORS[this.state.groups.length % AUTO_COLORS.length] };
+      const group = { id, name, color };
       this.state.groups.push(group);
       this.state.order = [.../* @__PURE__ */ new Set([...this.state.order, id])];
-      this.save();
       return group;
     }
     renameGroup(id, name) {
@@ -682,6 +722,11 @@
   }
 
   // src/services/tab-actions.ts
+  function toVirtualMember(tab) {
+    if (!tab.itemID) return null;
+    const { key, itemID, parentItemID, title, shortTitle, filename, source, creatorYear, collection } = tab;
+    return { key, itemID, parentItemID, title, shortTitle, filename, source, creatorYear, collection, type: tab.tab.type };
+  }
   var TabActionService = class {
     win;
     store;
@@ -721,26 +766,21 @@
         if (protectSelected && id === selectedID) continue;
         const tracked = trackedMap.get(id);
         if (protectPinned && tracked?.pinned) continue;
-        if (tracked && preserveVirtual && getPref("enableVirtualMembers") && tracked.groupId && tracked.itemID) {
-          const vMeta = {
-            key: tracked.key,
-            itemID: tracked.itemID,
-            parentItemID: tracked.parentItemID,
-            title: tracked.title,
-            shortTitle: tracked.shortTitle,
-            filename: tracked.filename,
-            source: tracked.source,
-            creatorYear: tracked.creatorYear,
-            collection: tracked.collection,
-            type: tab.type
-          };
-          this.store.saveVirtualMember(vMeta);
+        if (tracked?.groupId && preserveVirtual && getPref("enableVirtualMembers")) {
+          const member = toVirtualMember(tracked);
+          if (member) this.store.saveVirtualMember(member);
         }
         toClose.push(id);
       }
       if (!toClose.length) return 0;
       tabs.close(toClose.length === 1 ? toClose[0] : toClose);
       return toClose.length;
+    }
+    hideGroup(groupId) {
+      const tabs = this.meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId);
+      const members = tabs.map(toVirtualMember).filter((member) => member !== null);
+      if (groupId) this.store.setGroupHidden(groupId, true, members);
+      else this.store.hideNamedUngrouped(tabs.map((tab) => tab.key), members);
     }
     undoCloseTab() {
       const tabs = this.win.Zotero_Tabs;
@@ -806,9 +846,10 @@
     autoGroupByCollection(onlyTabIDs) {
       let moved = 0;
       const filterSet = onlyTabIDs ? new Set(onlyTabIDs) : null;
+      const hiddenNames = new Set(this.store.hiddenGroups().map((group) => group.name));
       for (const t2 of this.meta.buildTrackedTabs()) {
         if (filterSet && !filterSet.has(t2.tab.id)) continue;
-        if (!t2.groupId && t2.collection && t2.collection !== uncategorizedCollectionLabel()) {
+        if (!t2.groupId && t2.collection && !hiddenNames.has(t2.collection) && t2.collection !== uncategorizedCollectionLabel()) {
           const group = this.store.ensureGroup(t2.collection);
           this.store.assignKey(t2.key, group.id);
           moved++;
@@ -1348,7 +1389,9 @@
       if (this.root) this.root.hidden = !mounted;
       this.renderToolbarButtons(compactMode, sidebarHealthy);
       if (!mounted || !this.root || this.root.querySelector(".ztf-inline-edit")) return;
-      const tracked = this.meta.buildTrackedTabs();
+      const rawGroups = this.store.visibleGroups();
+      const visibleGroupIds = new Set(rawGroups.map((group) => group.id));
+      const tracked = this.meta.buildTrackedTabs().filter((tab) => visibleGroupIds.has(tab.groupId));
       const selectedID = this.meta.getSelectedTabID();
       const scroll = this.root.scrollLeft;
       const pinnedTabs = getPref("enablePinnedTabs") ? tracked.filter((t2) => t2.pinned) : [];
@@ -1359,11 +1402,12 @@
         strip.scrollLeft = pinnedScroll;
       }
       const unpinned = tracked.filter((t2) => !t2.pinned);
-      const rawGroups = this.store.orderedGroups();
+      const openKeys = new Set(tracked.map((tab) => tab.key));
+      const virtualMembers = getPref("enableVirtualMembers") ? Object.values(this.store.state.virtualMembers).filter((member) => !openKeys.has(member.key)) : [];
       const groups = rawGroups.filter((g) => {
         if (g.id || rawGroups.length > 1 || this.store.state.ungroupedName) return true;
         const hasMembers = unpinned.some((item) => !item.groupId);
-        const hasVirtuals = getPref("enableVirtualMembers") && Object.values(this.store.state.virtualMembers).some((m) => !this.store.groupOfKey(m.key));
+        const hasVirtuals = virtualMembers.some((member) => !this.store.groupOfKey(member.key));
         return hasMembers || hasVirtuals;
       });
       for (const g of groups) {
@@ -1387,7 +1431,7 @@
         section.element.style.setProperty("--ztf-ink", contrastInk(g.color));
         const collapsed = this.store.state.collapsed.includes(g.id);
         const members = unpinned.filter((t2) => t2.groupId === g.id);
-        const virtuals = getPref("enableVirtualMembers") ? Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === g.id) : [];
+        const virtuals = virtualMembers.filter((member) => this.store.groupOfKey(member.key) === g.id);
         section.update(g, collapsed, members.length + virtuals.length);
         section.heading.oncontextmenu = (e) => this.menus.openGroupMenu(e, g);
         this.drag.bindGroupDrag(section.heading, g.id, collapsed);
@@ -1523,6 +1567,15 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         const sessionCount = this.store.state.sessions.length;
         btn.append(createSvgIcon(this.doc, "layers", 12), this.doc.createTextNode(t("zotero-tabflow-sessions-btn", `会话 (${sessionCount})`, { count: sessionCount })));
         btn.onclick = () => this.popovers.openSessionsMenu(btn);
+        this.toolbarActions.append(btn);
+      }
+      const hiddenCount = this.store.hiddenGroups().length;
+      if (hiddenCount) {
+        const btn = this.h("button", "ztf-tb-btn ztf-hidden-groups");
+        btn.type = "button";
+        btn.textContent = t("zotero-tabflow-hidden-groups", `已隐藏 (${hiddenCount})`, { count: hiddenCount });
+        btn.setAttribute("aria-haspopup", "menu");
+        btn.onclick = () => this.popovers.openHiddenGroupsMenu(btn);
         this.toolbarActions.append(btn);
       }
       if (getPref("enableStaleSuggestions")) {
@@ -1870,7 +1923,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       format: "zotero-tabflow-session",
       schemaVersion: 1,
       exportedAt: Date.now(),
-      sourcePluginVersion: pluginVersion || "17.2.0",
+      sourcePluginVersion: pluginVersion || void 0,
       sessions
     }, null, 2);
   }
@@ -2191,6 +2244,17 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         });
       });
     }
+    openHiddenGroupsMenu(anchor) {
+      const groups = this.store.hiddenGroups();
+      if (!groups.length) return;
+      this.openPopupMenu(anchor, (popup) => {
+        for (const group of groups) {
+          this.item(popup, t("zotero-tabflow-show-group", `恢复显示「${group.name}」`, { name: group.name }), () => {
+            this.store.setGroupHidden(group.id, false);
+          });
+        }
+      });
+    }
     openSessionsMenu(anchor) {
       if (!getPref("enableSessions")) return;
       this.openPopupMenu(anchor, (popup) => {
@@ -2287,7 +2351,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         fp.defaultString = "zotero-tabflow-sessions.json";
         const res = await new Promise((resolve) => fp.open(resolve));
         if (res !== Ci.nsIFilePicker.returnOK && res !== Ci.nsIFilePicker.returnReplace) return;
-        const version = Zotero.zoterotabflow?.version || "17.2.0";
+        const version = Zotero.zoterotabflow?.version;
         await Zotero.File.putContentsAsync(fp.file, exportSessionsJson(this.store.state.sessions, version), "utf-8");
       } catch (error) {
         Zotero.logError(error);
@@ -2626,7 +2690,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         const groupPop = this.xul("menupopup");
         groupMenu.append(groupPop);
         popup.append(groupMenu);
-        for (const g of this.store.orderedGroups().filter((x) => x.id)) {
+        for (const g of this.store.visibleGroups().filter((x) => x.id)) {
           this.item(groupPop, g.name, () => {
             this.store.assignKey(tracked.key, g.id);
             this.onRefresh();
@@ -2674,6 +2738,9 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         });
         if (!group.id) {
           const ungrouped = this.meta.buildTrackedTabs().filter((x) => !x.groupId && !x.pinned);
+          if (getPref("enableGroupHiding") && this.store.state.ungroupedName) {
+            this.item(popup, t("zotero-tabflow-hide-named-ungrouped", "保存为独立分组并隐藏"), () => this.actions.hideGroup(""));
+          }
           this.item(popup, t("zotero-tabflow-menu-convert-ungrouped", `将未分组文献转为新分组… (${ungrouped.length})`, { count: ungrouped.length }), () => {
             const val = { value: "" };
             if (Services.prompt.prompt(this.win, t("zotero-tabflow-new-group-title", "新建分组"), t("zotero-tabflow-new-group-prompt", "分组名称："), val, null, {}) && val.value.trim()) {
@@ -2683,6 +2750,9 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
             }
           }, { disabled: !ungrouped.length });
         } else {
+          if (getPref("enableGroupHiding")) {
+            this.item(popup, t("zotero-tabflow-hide-group", "隐藏分组"), () => this.actions.hideGroup(group.id));
+          }
           this.item(popup, t("zotero-tabflow-dissolve-group", "解散此分组"), () => {
             if (Services.prompt.confirm(this.win, t("zotero-tabflow-dissolve-group", "解散分组"), t("zotero-tabflow-dissolve-group-confirm", `解散“${group.name}”？标签页将保留并回到未分组。`, { name: group.name }))) {
               this.store.dissolveGroup(group.id);
@@ -3096,7 +3166,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       placeholder.selected = true;
       placeholder.setAttribute("data-l10n-id", "zotero-tabflow-batch-move");
       this.groups.replaceChildren(placeholder);
-      for (const group of this.store.orderedGroups()) {
+      for (const group of this.store.visibleGroups()) {
         const option = this.h("option");
         option.value = group.id;
         option.textContent = group.name;
@@ -3366,20 +3436,23 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       const q = (this.searchInput?.value || "").trim().toLowerCase();
       const selectedID = this.meta.getSelectedTabID();
       const tracked = this.meta.buildTrackedTabs();
-      this.selection?.beginRender(tracked);
+      const groups = this.store.visibleGroups();
+      const visibleGroupIds = new Set(groups.map((group) => group.id));
+      const visibleTabs = tracked.filter((tab) => visibleGroupIds.has(tab.groupId));
+      this.selection?.beginRender(visibleTabs);
       if (this.statusEl) {
         renderSidebarStatusBar(this.doc, this.statusEl, computeWorkspaceStatusCounts(tracked, this.store), () => {
           this.actions.sleepInactiveTabs();
           this.onRefresh();
         });
       }
-      const allTracked = tracked.filter((t2) => !q || `${t2.title} ${t2.shortTitle} ${t2.filename} ${t2.collection} ${this.store.getRemark(t2.key).note}`.toLowerCase().includes(q));
-      const virtualList = getPref("enableVirtualMembers") ? Object.values(this.store.state.virtualMembers) : [];
+      const allTracked = visibleTabs.filter((t2) => !q || `${t2.title} ${t2.shortTitle} ${t2.filename} ${t2.collection} ${this.store.getRemark(t2.key).note}`.toLowerCase().includes(q));
+      const openKeys = new Set(tracked.map((tab) => tab.key));
+      const virtualList = getPref("enableVirtualMembers") ? Object.values(this.store.state.virtualMembers).filter((m) => !openKeys.has(m.key) && visibleGroupIds.has(this.store.groupOfKey(m.key))) : [];
       const matchingVirtuals = virtualList.filter((m) => !q || `${m.title} ${m.shortTitle} ${m.collection}`.toLowerCase().includes(q));
       let renderedGroupsCount = 1;
       if (this.viewMode === "groups") {
         if (!this.groupSections.size) this.listEl.replaceChildren();
-        const groups = this.store.orderedGroups();
         renderedGroupsCount = groups.length;
         for (const g of groups) {
           const members = allTracked.filter((t2) => t2.groupId === g.id);
@@ -3941,8 +4014,9 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       const prevSelected = this.lastSelected;
       this.lastSelected = this.tracker.trackActivity(this.lastSelected);
       const tracked = this.meta.buildTrackedTabs();
+      const hiddenGroupIds = new Set(this.store.state.groups.filter((group) => group.hidden === true).map((group) => group.id));
       for (const t2 of tracked) {
-        this.store.removeVirtualMember(t2.key, false);
+        if (!hiddenGroupIds.has(t2.groupId)) this.store.removeVirtualMember(t2.key, false);
       }
       if (this.lastSelected && this.lastSelected !== prevSelected) {
         const active = tracked.find((t2) => t2.tab.id === this.lastSelected);

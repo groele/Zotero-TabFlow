@@ -104,7 +104,9 @@ export class HorizontalBarController {
 		this.renderToolbarButtons(compactMode, sidebarHealthy);
 		if (!mounted || !this.root || this.root.querySelector('.ztf-inline-edit')) return;
 
-		const tracked = this.meta.buildTrackedTabs();
+		const rawGroups = this.store.visibleGroups();
+		const visibleGroupIds = new Set(rawGroups.map((group) => group.id));
+		const tracked = this.meta.buildTrackedTabs().filter((tab) => visibleGroupIds.has(tab.groupId));
 		const selectedID = this.meta.getSelectedTabID();
 		const scroll = this.root.scrollLeft;
 
@@ -117,11 +119,14 @@ export class HorizontalBarController {
 		}
 
 		const unpinned = tracked.filter((t) => !t.pinned);
-		const rawGroups = this.store.orderedGroups();
+		const openKeys = new Set(tracked.map((tab) => tab.key));
+		const virtualMembers = getPref('enableVirtualMembers')
+			? Object.values(this.store.state.virtualMembers).filter((member) => !openKeys.has(member.key))
+			: [];
 		const groups = rawGroups.filter((g) => {
 			if (g.id || rawGroups.length > 1 || this.store.state.ungroupedName) return true;
 			const hasMembers = unpinned.some((item) => !item.groupId);
-			const hasVirtuals = getPref('enableVirtualMembers') && Object.values(this.store.state.virtualMembers).some((m) => !this.store.groupOfKey(m.key));
+			const hasVirtuals = virtualMembers.some((member) => !this.store.groupOfKey(member.key));
 			return hasMembers || hasVirtuals;
 		});
 		for (const g of groups) {
@@ -140,9 +145,7 @@ export class HorizontalBarController {
 			section.element.style.setProperty('--ztf-ink', contrastInk(g.color));
 			const collapsed = this.store.state.collapsed.includes(g.id);
 			const members = unpinned.filter((t) => t.groupId === g.id);
-			const virtuals = getPref('enableVirtualMembers')
-				? Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === g.id)
-				: [];
+			const virtuals = virtualMembers.filter((member) => this.store.groupOfKey(member.key) === g.id);
 
 			section.update(g, collapsed, members.length + virtuals.length);
 			section.heading.oncontextmenu = (e: Event) => this.menus.openGroupMenu(e as MouseEvent, g);
@@ -282,6 +285,15 @@ export class HorizontalBarController {
 			const sessionCount = this.store.state.sessions.length;
 			btn.append(createSvgIcon(this.doc, 'layers', 12), this.doc.createTextNode(t('zotero-tabflow-sessions-btn', `会话 (${sessionCount})`, { count: sessionCount })));
 			btn.onclick = () => this.popovers.openSessionsMenu(btn);
+			this.toolbarActions.append(btn);
+		}
+		const hiddenCount = this.store.hiddenGroups().length;
+		if (hiddenCount) {
+			const btn = this.h('button', 'ztf-tb-btn ztf-hidden-groups');
+			btn.type = 'button';
+			btn.textContent = t('zotero-tabflow-hidden-groups', `已隐藏 (${hiddenCount})`, { count: hiddenCount });
+			btn.setAttribute('aria-haspopup', 'menu');
+			btn.onclick = () => this.popovers.openHiddenGroupsMenu(btn);
 			this.toolbarActions.append(btn);
 		}
 		if (getPref('enableStaleSuggestions')) {

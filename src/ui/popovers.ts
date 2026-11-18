@@ -103,6 +103,18 @@ export class PopoverController {
 		});
 	}
 
+	openHiddenGroupsMenu(anchor: Element): void {
+		const groups = this.store.hiddenGroups();
+		if (!groups.length) return;
+		this.openPopupMenu(anchor, (popup) => {
+			for (const group of groups) {
+				this.item(popup, t('zotero-tabflow-show-group', `恢复显示「${group.name}」`, { name: group.name }), () => {
+					this.store.setGroupHidden(group.id, false);
+				});
+			}
+		});
+	}
+
 	openSessionsMenu(anchor: Element): void {
 		if (!getPref('enableSessions')) return;
 		this.openPopupMenu(anchor, (popup) => {
@@ -201,7 +213,7 @@ export class PopoverController {
 			fp.defaultString = 'zotero-tabflow-sessions.json';
 			const res = await new Promise<number>((resolve) => fp.open(resolve));
 			if (res !== Ci.nsIFilePicker.returnOK && res !== Ci.nsIFilePicker.returnReplace) return;
-			const version = (Zotero as any).zoterotabflow?.version || '17.2.0';
+			const version = (Zotero as any).zoterotabflow?.version;
 			await Zotero.File.putContentsAsync(fp.file, exportSessionsJson(this.store.state.sessions, version), 'utf-8');
 		} catch (error) {
 			Zotero.logError(error as Error);

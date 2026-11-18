@@ -185,21 +185,26 @@ export class VerticalSidebarController {
 		const q = (this.searchInput?.value || '').trim().toLowerCase();
 		const selectedID = this.meta.getSelectedTabID();
 		const tracked = this.meta.buildTrackedTabs();
-		this.selection?.beginRender(tracked);
+		const groups = this.store.visibleGroups();
+		const visibleGroupIds = new Set(groups.map((group) => group.id));
+		const visibleTabs = tracked.filter((tab) => visibleGroupIds.has(tab.groupId));
+		this.selection?.beginRender(visibleTabs);
 		if (this.statusEl) {
 			renderSidebarStatusBar(this.doc, this.statusEl, computeWorkspaceStatusCounts(tracked, this.store), () => {
 				this.actions.sleepInactiveTabs();
 				this.onRefresh();
 			});
 		}
-		const allTracked = tracked.filter((t) => !q || `${t.title} ${t.shortTitle} ${t.filename} ${t.collection} ${this.store.getRemark(t.key).note}`.toLowerCase().includes(q));
-		const virtualList = getPref('enableVirtualMembers') ? Object.values(this.store.state.virtualMembers) : [];
+		const allTracked = visibleTabs.filter((t) => !q || `${t.title} ${t.shortTitle} ${t.filename} ${t.collection} ${this.store.getRemark(t.key).note}`.toLowerCase().includes(q));
+		const openKeys = new Set(tracked.map((tab) => tab.key));
+		const virtualList = getPref('enableVirtualMembers')
+			? Object.values(this.store.state.virtualMembers).filter((m) => !openKeys.has(m.key) && visibleGroupIds.has(this.store.groupOfKey(m.key)))
+			: [];
 		const matchingVirtuals = virtualList.filter((m) => !q || `${m.title} ${m.shortTitle} ${m.collection}`.toLowerCase().includes(q));
 		let renderedGroupsCount = 1;
 
 		if (this.viewMode === 'groups') {
 			if (!this.groupSections.size) this.listEl.replaceChildren();
-			const groups = this.store.orderedGroups();
 			renderedGroupsCount = groups.length;
 			for (const g of groups) {
 				const members = allTracked.filter((t) => t.groupId === g.id);

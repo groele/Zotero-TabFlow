@@ -95,7 +95,7 @@ export class SidebarSelection {
 		placeholder.selected = true;
 		placeholder.setAttribute('data-l10n-id', 'zotero-tabflow-batch-move');
 		this.groups.replaceChildren(placeholder);
-		for (const group of this.store.orderedGroups()) {
+		for (const group of this.store.visibleGroups()) {
 			const option = this.h('option');
 			option.value = group.id;
 			option.textContent = group.name;

@@ -134,8 +134,9 @@ class WindowWorkspace {
 		const prevSelected = this.lastSelected;
 		this.lastSelected = this.tracker.trackActivity(this.lastSelected);
 		const tracked = this.meta.buildTrackedTabs();
+		const hiddenGroupIds = new Set(this.store.state.groups.filter((group) => group.hidden === true).map((group) => group.id));
 		for (const t of tracked) {
-			this.store.removeVirtualMember(t.key, false);
+			if (!hiddenGroupIds.has(t.groupId)) this.store.removeVirtualMember(t.key, false);
 		}
 		if (this.lastSelected && this.lastSelected !== prevSelected) {
 			const active = tracked.find((t) => t.tab.id === this.lastSelected);

@@ -9,6 +9,7 @@ export const PREF_PREFIX = 'extensions.zotero.tabflow.';
 
 export interface TabFlowPrefs {
 	enableHorizontalGroups: boolean;
+	enableGroupHiding: boolean;
 	compactTopBar: boolean;
 	enableVerticalSidebar: boolean;
 	enableBatchSelection: boolean;
@@ -45,6 +46,7 @@ export interface TabFlowPrefs {
 
 export const DEFAULT_PREFS: TabFlowPrefs = {
 	enableHorizontalGroups: true,
+	enableGroupHiding: true,
 	compactTopBar: false,
 	enableVerticalSidebar: true,
 	enableBatchSelection: true,

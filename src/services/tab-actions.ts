@@ -1,8 +1,14 @@
 import { getPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
-import type { TabCloseOptions, VirtualMemberMeta } from '../core/types.ts';
+import type { TabCloseOptions, TrackedTab, VirtualMemberMeta } from '../core/types.ts';
 import { openAttachmentFolder } from './attachment-folder.ts';
 import { uncategorizedCollectionLabel, type ItemMetadataService } from './item-metadata.ts';
+
+function toVirtualMember(tab: TrackedTab): VirtualMemberMeta | null {
+	if (!tab.itemID) return null;
+	const { key, itemID, parentItemID, title, shortTitle, filename, source, creatorYear, collection } = tab;
+	return { key, itemID, parentItemID, title, shortTitle, filename, source, creatorYear, collection, type: tab.tab.type };
+}
 
 export class TabActionService {
 	private readonly win: Window;
@@ -48,26 +54,22 @@ export class TabActionService {
 			if (protectSelected && id === selectedID) continue;
 			const tracked = trackedMap.get(id);
 			if (protectPinned && tracked?.pinned) continue;
-			if (tracked && preserveVirtual && getPref('enableVirtualMembers') && tracked.groupId && tracked.itemID) {
-				const vMeta: VirtualMemberMeta = {
-					key: tracked.key,
-					itemID: tracked.itemID,
-					parentItemID: tracked.parentItemID,
-					title: tracked.title,
-					shortTitle: tracked.shortTitle,
-					filename: tracked.filename,
-					source: tracked.source,
-					creatorYear: tracked.creatorYear,
-					collection: tracked.collection,
-					type: tab.type,
-				};
-				this.store.saveVirtualMember(vMeta);
+			if (tracked?.groupId && preserveVirtual && getPref('enableVirtualMembers')) {
+				const member = toVirtualMember(tracked);
+				if (member) this.store.saveVirtualMember(member);
 			}
 			toClose.push(id);
 		}
 		if (!toClose.length) return 0;
 		tabs.close(toClose.length === 1 ? toClose[0] : toClose);
 		return toClose.length;
+	}
+
+	hideGroup(groupId: string): void {
+		const tabs = this.meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId);
+		const members = tabs.map(toVirtualMember).filter((member) => member !== null);
+		if (groupId) this.store.setGroupHidden(groupId, true, members);
+		else this.store.hideNamedUngrouped(tabs.map((tab) => tab.key), members);
 	}
 
 	undoCloseTab(): boolean {
@@ -130,9 +132,10 @@ export class TabActionService {
 	autoGroupByCollection(onlyTabIDs?: string[]): number {
 		let moved = 0;
 		const filterSet = onlyTabIDs ? new Set(onlyTabIDs) : null;
+		const hiddenNames = new Set(this.store.hiddenGroups().map((group) => group.name));
 		for (const t of this.meta.buildTrackedTabs()) {
 			if (filterSet && !filterSet.has(t.tab.id)) continue;
-			if (!t.groupId && t.collection && t.collection !== uncategorizedCollectionLabel()) {
+			if (!t.groupId && t.collection && !hiddenNames.has(t.collection) && t.collection !== uncategorizedCollectionLabel()) {
 				const group = this.store.ensureGroup(t.collection);
 				this.store.assignKey(t.key, group.id);
 				moved++;

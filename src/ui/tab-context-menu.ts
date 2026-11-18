@@ -94,7 +94,7 @@ export class TabContextMenuController {
 			const groupPop = this.xul('menupopup');
 			groupMenu.append(groupPop);
 			popup.append(groupMenu);
-			for (const g of this.store.orderedGroups().filter((x) => x.id)) {
+			for (const g of this.store.visibleGroups().filter((x) => x.id)) {
 				this.item(groupPop, g.name, () => { this.store.assignKey(tracked.key, g.id); this.onRefresh(); }, { type: 'checkbox', checked: tracked.groupId === g.id });
 			}
 			this.item(groupPop, t('zotero-tabflow-menu-new-group-join', '新建分组并加入…'), () => {
@@ -135,6 +135,9 @@ export class TabContextMenuController {
 			});
 			if (!group.id) {
 				const ungrouped = this.meta.buildTrackedTabs().filter((x) => !x.groupId && !x.pinned);
+				if (getPref('enableGroupHiding') && this.store.state.ungroupedName) {
+					this.item(popup, t('zotero-tabflow-hide-named-ungrouped', '保存为独立分组并隐藏'), () => this.actions.hideGroup(''));
+				}
 				this.item(popup, t('zotero-tabflow-menu-convert-ungrouped', `将未分组文献转为新分组… (${ungrouped.length})`, { count: ungrouped.length }), () => {
 					const val = { value: '' };
 					if (Services.prompt.prompt(this.win, t('zotero-tabflow-new-group-title', '新建分组'), t('zotero-tabflow-new-group-prompt', '分组名称：'), val, null, {}) && val.value.trim()) {
@@ -144,6 +147,9 @@ export class TabContextMenuController {
 					}
 				}, { disabled: !ungrouped.length });
 			} else {
+				if (getPref('enableGroupHiding')) {
+					this.item(popup, t('zotero-tabflow-hide-group', '隐藏分组'), () => this.actions.hideGroup(group.id));
+				}
 				this.item(popup, t('zotero-tabflow-dissolve-group', '解散此分组'), () => {
 					if (Services.prompt.confirm(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-confirm', `解散“${group.name}”？标签页将保留并回到未分组。`, { name: group.name }))) {
 						this.store.dissolveGroup(group.id);

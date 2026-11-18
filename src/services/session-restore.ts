@@ -171,7 +171,7 @@ export function exportSessionsJson(sessions: readonly TabSessionSnapshot[], plug
 		format: 'zotero-tabflow-session',
 		schemaVersion: 1,
 		exportedAt: Date.now(),
-		sourcePluginVersion: pluginVersion || '17.2.0',
+		sourcePluginVersion: pluginVersion || undefined,
 		sessions,
 	}, null, 2);
 }
