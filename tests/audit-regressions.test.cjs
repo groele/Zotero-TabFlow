@@ -275,3 +275,87 @@ test('horizontal inactive tabs compress to ellipsis chips while active tab stays
 	target.restoreSessionLayout(snap, true);
 	assert.equal(target.state.ungroupedName, 'ReS2');
 });
+
+test('group-only session snapshot, snapshot update/rename, collapseOtherGroups, and history pruning', () => {
+	const { store } = fixture();
+	const { buildGroupSessionSnapshot, updateExistingSession, renameExistingSession, pruneHistory } = require('../src/core/session-store.ts');
+	const g1 = store.ensureGroup('Optics');
+	const g2 = store.ensureGroup('Theory');
+	store.assignKey('1:A', g1.id);
+	store.assignKey('1:B', g2.id);
+	store.setRemark('1:A', 'Key optics paper');
+	store.setRemark('1:B', 'Unrelated theory');
+	store.setPinnedKeys(['1:A', '1:B'], true);
+
+	const groupSnap = buildGroupSessionSnapshot(store.state, 'Optics Only', g1.id, ['1:A', '1:B']);
+	assert.equal(groupSnap.groups.length, 1);
+	assert.equal(groupSnap.groups[0].id, g1.id);
+	assert.deepEqual(groupSnap.openKeys, ['1:A']);
+	assert.deepEqual(groupSnap.pinned, ['1:A']);
+	assert.equal(groupSnap.remarks['1:A'].note, 'Key optics paper');
+	assert.equal(groupSnap.remarks['1:B'], undefined);
+
+	const saved = store.saveGroupSession('Optics Saved', g1.id, ['1:A', '1:B']);
+	assert.equal(store.state.sessions.length, 1);
+	assert.equal(renameExistingSession(store.state, saved.id, 'Optics Renamed'), true);
+	assert.equal(store.state.sessions[0].name, 'Optics Renamed');
+
+	store.assignKey('1:C', g1.id);
+	const updated = updateExistingSession(store.state, saved.id, ['1:A', '1:B', '1:C']);
+	assert.ok(updated);
+	assert.equal(updated.name, 'Optics Renamed');
+	assert.deepEqual(updated.openKeys, ['1:A', '1:B', '1:C']);
+
+	store.collapseOtherGroups(g1.id);
+	assert.ok(!store.state.collapsed.includes(g1.id));
+	assert.ok(store.state.collapsed.includes(g2.id));
+
+	const now = Date.now();
+	store.state.history['1:OLD_ORPHAN'] = { firstSeen: 1, lastViewed: now - 200 * 86_400_000 };
+	store.state.history['1:A'] = { firstSeen: 1, lastViewed: now - 200 * 86_400_000 };
+	store.state.history['1:RECENT_ORPHAN'] = { firstSeen: now - 1000, lastViewed: now - 1000 };
+	const pruned = pruneHistory(store.state, ['1:X'], 500, 180 * 86_400_000, now);
+	assert.equal(pruned, 1);
+	assert.equal(store.state.history['1:OLD_ORPHAN'], undefined);
+	assert.ok(store.state.history['1:A']);
+	assert.ok(store.state.history['1:RECENT_ORPHAN']);
+});
+
+test('cross-area drag MIME helper and SidebarHoverCard below placement with showVirtual', () => {
+	const { TABFLOW_DRAG_MIME, hasTabFlowDraggedTab } = require('../src/core/drag-utils.ts');
+	const { SidebarHoverCard } = require('../src/ui/sidebar-hover.ts');
+	assert.equal(hasTabFlowDraggedTab({ types: [TABFLOW_DRAG_MIME] }), true);
+	assert.equal(hasTabFlowDraggedTab({ types: ['text/plain'] }), false);
+
+	const { store } = fixture();
+	store.setRemark('1:V1', 'Compressed note');
+	const mkEl = (tag) => {
+		const node = {
+			tagName: tag.toUpperCase(), className: '', textContent: '', hidden: false,
+			style: {}, children: [],
+			append(...args) { for (const a of args) if (a && typeof a === 'object') node.children.push(a); },
+			remove() {},
+			getBoundingClientRect: () => ({ left: 100, right: 220, top: 20, bottom: 52, width: 200, height: 100 }),
+		};
+		return node;
+	};
+	const root = mkEl('window');
+	const doc = { documentElement: root, createElementNS: (_ns, t) => mkEl(t) };
+	const win = { innerWidth: 1200, innerHeight: 800, setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {} };
+	const card = new SidebarHoverCard(win, doc, store);
+	card.mount();
+	const anchor = mkEl('button');
+	card.showVirtual(anchor, {
+		key: '1:V1', itemID: 10, title: 'Sliding ferroelectricity',
+		shortTitle: 'Sliding', filename: 'slide.pdf', creatorYear: 'Wu 2023',
+		source: 'Nature', collection: 'ReS2',
+	}, 'Group A', 'below');
+	const cardEl = root.children[0];
+	assert.equal(cardEl.hidden, false);
+	assert.equal(cardEl.style.left, '100px');
+	assert.equal(cardEl.style.top, '58px');
+	assert.ok(cardEl.children.some((c) => c.textContent.includes('Compressed note')));
+	card.hide();
+	assert.equal(cardEl.hidden, true);
+	card.dispose();
+});

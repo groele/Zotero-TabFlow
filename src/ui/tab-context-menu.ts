@@ -202,7 +202,20 @@ export class TabContextMenuController {
 						this.onRefresh();
 					});
 				});
+				this.item(popup, `📦 ${t('zotero-tabflow-menu-save-group-workspace', '仅保存本组到工作区…')}`, () => {
+					this.defer(() => {
+						const baseName = group.name || t('zotero-tabflow-session-default-name', '工作区会话');
+						const val = { value: `${baseName} · ${formatSnapshotTimestamp(Date.now())}` };
+						if (!Services.prompt.prompt(this.win, t('zotero-tabflow-hub-save-session', '保存工作区'), t('zotero-tabflow-sessions-save-prompt', '请输入会话名称：'), val, null, {})) return;
+						this.store.saveGroupSession(val.value, group.id, this.meta.buildTrackedTabs().map((tab) => tab.key));
+						this.onRefresh();
+					});
+				});
 			}
+			this.item(popup, t('zotero-tabflow-menu-collapse-others', '折叠其他分组'), () => {
+				this.store.collapseOtherGroups(group.id);
+				this.onRefresh();
+			}, { disabled: !this.store.visibleGroups().some((g) => g.id !== group.id) });
 			if (virtualMembers.length) {
 				this.item(popup, `▶ ${t('zotero-tabflow-menu-open-virtual-all', `打开组内全部虚拟文献 (${virtualMembers.length})`, { count: virtualMembers.length })}`, () => {
 					void (async () => {

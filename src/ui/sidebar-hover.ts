@@ -1,16 +1,18 @@
 import { t } from '../core/i18n.ts';
 import { getPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
-import type { TrackedTab } from '../core/types.ts';
+import type { TrackedTab, VirtualMemberMeta } from '../core/types.ts';
 
 export class SidebarHoverCard {
+	private readonly win: Window;
+	private readonly doc: Document;
+	private readonly store: TabFlowStore;
 	private card: HTMLDivElement | null = null;
+	private showTimer: number | null = null;
 
-	constructor(
-		private readonly win: Window,
-		private readonly doc: Document,
-		private readonly store: TabFlowStore,
-	) {}
+	constructor(win: Window, doc: Document, store: TabFlowStore) {
+		this.win = win; this.doc = doc; this.store = store;
+	}
 
 	mount(): void {
 		if (this.card) return;
@@ -21,13 +23,27 @@ export class SidebarHoverCard {
 		this.card = card;
 	}
 
-	show(anchor: HTMLElement, tab: TrackedTab): void {
-		if (!getPref('enableHoverPreview') || !this.card) return;
-		const h = this.store.state.history[tab.key];
-		const last = h?.lastViewed;
-		const days = last ? Math.max(0, Math.floor((Date.now() - last) / 86_400_000)) : 0;
-		const remark = getPref('enableTabRemarks') ? this.store.getRemark(tab.key).note : '';
+	scheduleShow(fn: () => void, delayMs = 180): void {
+		this.cancelTimer();
+		if (typeof this.win?.setTimeout === 'function') {
+			this.showTimer = this.win.setTimeout(() => {
+				this.showTimer = null;
+				fn();
+			}, delayMs);
+		} else {
+			fn();
+		}
+	}
 
+	private cancelTimer(): void {
+		if (this.showTimer !== null) {
+			this.win?.clearTimeout?.(this.showTimer);
+			this.showTimer = null;
+		}
+	}
+
+	show(anchor: HTMLElement, tab: TrackedTab, placement: 'right' | 'below' = 'right'): void {
+		if (!getPref('enableHoverPreview') || !this.card) return;
 		const reader = (Zotero.Reader as any)?.getByTabID?.(tab.tab.id);
 		const pageIdx = reader?.state?.pageIndex;
 		const numPages = reader?._internalReader?._pdfDocument?.numPages;
@@ -40,7 +56,24 @@ export class SidebarHoverCard {
 		const annots = itemObj?.isAttachment?.() && typeof itemObj?.getAnnotations === 'function' ? itemObj.getAnnotations()?.length : undefined;
 		const annotText = typeof annots === 'number' && annots >= 0 ? t('zotero-tabflow-hover-annots', `批注 ${annots} 条`, { count: annots }) : '';
 		const readerMeta = [pageText, annotText].filter(Boolean).join(' · ');
+		this.renderCard(anchor, tab.key, tab.title, tab.creatorYear, tab.source, tab.collection, readerMeta, placement);
+	}
 
+	showVirtual(anchor: HTMLElement, member: VirtualMemberMeta, groupName = '', placement: 'right' | 'below' = 'below'): void {
+		if (!getPref('enableHoverPreview') || !this.card) return;
+		const col = [member.collection, groupName].filter(Boolean).join(' · ');
+		this.renderCard(anchor, member.key, member.title, member.creatorYear, member.source, col, t('zotero-tabflow-spot-virtual-hint', '虚拟保留'), placement);
+	}
+
+	private renderCard(
+		anchor: HTMLElement, key: string, title: string, creatorYear: string,
+		source: string, collection: string, extraMeta: string, placement: 'right' | 'below',
+	): void {
+		if (!this.card) return;
+		const h = this.store.state.history[key];
+		const last = h?.lastViewed;
+		const days = last ? Math.max(0, Math.floor((Date.now() - last) / 86_400_000)) : 0;
+		const remark = getPref('enableTabRemarks') ? this.store.getRemark(key).note : '';
 		this.card.textContent = '';
 		const mk = (cls: string, text: string) => {
 			const d = this.doc.createElementNS('http://www.w3.org/1999/xhtml', 'div') as HTMLDivElement;
@@ -52,11 +85,11 @@ export class SidebarHoverCard {
 			: days === 0 ? t('zotero-tabflow-hover-today', '今天')
 				: t('zotero-tabflow-hover-days-ago', `${days} 天前`, { days });
 		this.card.append(
-			mk('ztf-hc-title', tab.title),
-			mk('ztf-hc-meta', [tab.creatorYear, tab.source].filter(Boolean).join(' · ') || t('zotero-tabflow-hover-no-meta', '暂无作者/期刊元数据')),
-			mk('ztf-hc-meta', t('zotero-tabflow-hover-collection-last', `集合：${tab.collection} · 上次阅读：${lastText}`, { collection: tab.collection, time: lastText })),
+			mk('ztf-hc-title', title),
+			mk('ztf-hc-meta', [creatorYear, source].filter(Boolean).join(' · ') || t('zotero-tabflow-hover-no-meta', '暂无作者/期刊元数据')),
+			mk('ztf-hc-meta', t('zotero-tabflow-hover-collection-last', `集合：${collection} · 上次阅读：${lastText}`, { collection, time: lastText })),
 		);
-		if (readerMeta) this.card.append(mk('ztf-hc-meta', readerMeta));
+		if (extraMeta) this.card.append(mk('ztf-hc-meta', extraMeta));
 		if (remark) this.card.append(mk('ztf-hc-note', t('zotero-tabflow-hover-remark', `备注：${remark}`, { note: remark })));
 
 		const rect = anchor.getBoundingClientRect();
@@ -64,15 +97,19 @@ export class SidebarHoverCard {
 		const cardRect = this.card.getBoundingClientRect?.();
 		const cardW = cardRect?.width ? Math.ceil(cardRect.width) + 16 : 332;
 		const cardH = cardRect?.height ? Math.ceil(cardRect.height) + 12 : 165;
-		this.card.style.left = `${Math.max(0, Math.min(rect.right + 8, this.win.innerWidth - cardW))}px`;
-		this.card.style.top = `${Math.max(0, Math.min(rect.top, this.win.innerHeight - cardH))}px`;
+		const left = placement === 'below' ? Math.min(rect.left, this.win.innerWidth - cardW) : Math.min(rect.right + 8, this.win.innerWidth - cardW);
+		const top = placement === 'below' ? Math.min(rect.bottom + 6, this.win.innerHeight - cardH) : Math.min(rect.top, this.win.innerHeight - cardH);
+		this.card.style.left = `${Math.max(8, left)}px`;
+		this.card.style.top = `${Math.max(8, top)}px`;
 	}
 
 	hide(): void {
-		if (this.card) this.card.hidden = true;
+		this.cancelTimer();
+		if (this.card && !this.card.hidden) this.card.hidden = true;
 	}
 
 	dispose(): void {
+		this.cancelTimer();
 		this.card?.remove();
 		this.card = null;
 	}

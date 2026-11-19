@@ -11,6 +11,7 @@ import { indexGroupMembers, shouldCollapseHorizontalChip, shouldRenderGroupHeadi
 import { createSvgIcon } from './icons.ts';
 import { renderPinnedStrip } from './pinned-strip.ts';
 import type { PopoverController } from './popovers.ts';
+import type { SidebarHoverCard } from './sidebar-hover.ts';
 import type { SpotlightController } from './spotlight.ts';
 import type { TabContextMenuController } from './tab-context-menu.ts';
 import { ToolbarActions, type ToolbarAction } from './toolbar-actions.ts';
@@ -37,6 +38,7 @@ export class HorizontalBarController {
 		private readonly popovers: PopoverController,
 		private readonly spotlight: SpotlightController,
 		private readonly onRefresh: () => void,
+		private readonly hoverCard?: SidebarHoverCard,
 	) {
 		this.drag = new HorizontalDragController(
 			win,
@@ -92,6 +94,7 @@ export class HorizontalBarController {
 
 	private bindWheel(area: HTMLDivElement): void {
 		area.addEventListener('wheel', (e: WheelEvent) => {
+			this.hoverCard?.hide();
 			e.stopPropagation();
 			if (e.ctrlKey || area.scrollWidth <= area.clientWidth) return;
 			e.preventDefault();
@@ -187,6 +190,9 @@ export class HorizontalBarController {
 						this.onRefresh();
 					});
 					vNode.oncontextmenu = (e: Event) => this.menus.openVirtualMenu(e as MouseEvent, v, g.id);
+					vNode.onmouseenter = () => this.hoverCard?.scheduleShow(() => this.hoverCard?.showVirtual(vNode, v, g.name, 'below'));
+					vNode.onmouseleave = () => this.hoverCard?.hide();
+					vNode.onmousedown = () => this.hoverCard?.hide();
 					nodes.append(vNode);
 				}
 				section.body.replaceChildren(nodes);
@@ -256,7 +262,10 @@ export class HorizontalBarController {
 			void this.actions.closeTab(tab.tab.id, true).then(this.onRefresh);
 		};
 		node.append(label, closeBtn);
-		node.onclick = () => this.actions.selectTab(tab.tab.id);
+		node.onclick = () => { this.hoverCard?.hide(); this.actions.selectTab(tab.tab.id); };
+		node.onmouseenter = () => this.hoverCard?.scheduleShow(() => this.hoverCard?.show(node, tab, 'below'));
+		node.onmouseleave = () => this.hoverCard?.hide();
+		node.onmousedown = () => this.hoverCard?.hide();
 		node.onauxclick = (e: Event) => {
 			if ((e as MouseEvent).button === 1) {
 				e.preventDefault();
@@ -320,6 +329,7 @@ export class HorizontalBarController {
 	}
 
 	dispose(): void {
+		this.hoverCard?.hide();
 		for (const group of this.groupSections.values()) group.dispose();
 		this.groupSections.clear();
 		this.drag.clear();

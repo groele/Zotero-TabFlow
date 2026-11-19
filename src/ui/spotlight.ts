@@ -6,7 +6,7 @@ import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import type { PopoverController } from './popovers.ts';
 
-interface SpotEntry { label: string; hint: string; run: () => void; }
+interface SpotEntry { label: string; hint: string; keepOpen?: boolean; run: () => void; }
 interface LibraryIndexItem { id: number; fullKey: string; title: string; metaHint: string; searchText: string; }
 
 export class SpotlightController {
@@ -28,13 +28,8 @@ export class SpotlightController {
 	private libraryLoad: Promise<void> | null = null;
 
 	constructor(win: Window, doc: Document, store: TabFlowStore, meta: ItemMetadataService, actions: TabActionService, popovers: PopoverController, onRefresh: () => void) {
-		this.win = win;
-		this.doc = doc;
-		this.store = store;
-		this.meta = meta;
-		this.actions = actions;
-		this.popovers = popovers;
-		this.onRefresh = onRefresh;
+		this.win = win; this.doc = doc; this.store = store; this.meta = meta;
+		this.actions = actions; this.popovers = popovers; this.onRefresh = onRefresh;
 	}
 
 	private h<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] {
@@ -81,7 +76,7 @@ export class SpotlightController {
 			if (e.key === 'Escape') { e.preventDefault(); this.close(); }
 			else if (e.key === 'ArrowDown') { e.preventDefault(); this.activeIndex = Math.max(0, Math.min(this.entries.length - 1, this.activeIndex + 1)); this.highlightActive(); }
 			else if (e.key === 'ArrowUp') { e.preventDefault(); this.activeIndex = Math.max(0, this.activeIndex - 1); this.highlightActive(); }
-			else if (e.key === 'Enter') { e.preventDefault(); const item = this.entries[this.activeIndex]; if (item) { item.run(); this.close(); } }
+			else if (e.key === 'Enter') { e.preventDefault(); const item = this.entries[this.activeIndex]; if (item) { item.run(); if (!item.keepOpen) this.close(); } }
 		});
 	}
 
@@ -107,7 +102,7 @@ export class SpotlightController {
 	}
 
 	private warmLibraryCache(): Promise<void> {
-		if (Date.now() - this.cacheTimestamp < 30_000 && this.libraryCache.length) return Promise.resolve();
+		if (Date.now() - this.cacheTimestamp < 120_000 && this.libraryCache.length) return Promise.resolve();
 		if (this.libraryLoad) return this.libraryLoad;
 		this.libraryLoading = true;
 		this.libraryLoad = (async () => {
@@ -295,13 +290,22 @@ export class SpotlightController {
 			] : []),
 		].filter((c) => !terms.length || terms.every((term) => `${c.label} ${c.hint}`.toLowerCase().includes(term)));
 
-		const sections = [
-			[t('zotero-tabflow-spot-section-tabs', '打开的标签'), allTabEntries],
-			[t('zotero-tabflow-spot-section-library', '文库文献'), libraryEntries],
-			[t('zotero-tabflow-spot-section-hidden', '隐藏项目'), [...hiddenDocuments, ...hiddenEntries]],
-			[t('zotero-tabflow-spot-section-sessions', '会话与快照'), tabsMode ? [] : sessionEntries],
-			[t('zotero-tabflow-spot-section-actions', '操作'), tabsMode ? [] : cmdEntries],
-		] as const;
+		const helpMode = q === '?';
+		const fill = (prefix: string) => { if (this.input) { this.input.value = prefix; this.input.focus(); this.renderResults(); } };
+		const helpEntries: SpotEntry[] = helpMode ? [
+			{ label: '@关键词', hint: t('zotero-tabflow-spot-help-lib', '搜索全部文库中的文献（不限于已打开标签）'), keepOpen: true, run: () => fill('@') },
+			{ label: '>tabs', hint: t('zotero-tabflow-spot-help-tabs', '列出所有打开标签并按最近阅读时间排序'), keepOpen: true, run: () => fill('>tabs ') },
+			{ label: '>命令', hint: t('zotero-tabflow-spot-help-cmd', '筛选保存工作区、切换侧边栏等快捷操作'), keepOpen: true, run: () => fill('>') },
+		] : [];
+		const sections = helpMode
+			? [[t('zotero-tabflow-spot-help-hint', '搜索语法提示'), helpEntries]] as const
+			: [
+				[t('zotero-tabflow-spot-section-tabs', '打开的标签'), allTabEntries],
+				[t('zotero-tabflow-spot-section-library', '文库文献'), libraryEntries],
+				[t('zotero-tabflow-spot-section-hidden', '隐藏项目'), [...hiddenDocuments, ...hiddenEntries]],
+				[t('zotero-tabflow-spot-section-sessions', '会话与快照'), tabsMode ? [] : sessionEntries],
+				[t('zotero-tabflow-spot-section-actions', '操作'), tabsMode ? [] : cmdEntries],
+			] as const;
 		this.entries = sections.flatMap(([, entries]) => entries);
 		this.activeIndex = Math.min(this.activeIndex, Math.max(0, this.entries.length - 1));
 		this.resultsEl.textContent = '';
@@ -332,7 +336,7 @@ export class SpotlightController {
 		const hint = this.h('span', 'ztf-spot-hint');
 		hint.textContent = entry.hint;
 		btn.append(main, hint);
-		btn.onclick = () => { entry.run(); this.close(); };
+		btn.onclick = () => { entry.run(); if (!entry.keepOpen) this.close(); };
 		this.resultsEl?.append(btn);
 	}
 
@@ -347,9 +351,6 @@ export class SpotlightController {
 		this.win.removeEventListener('keydown', this.handleGlobalShortcut, true);
 		this.panel?.hidePopup?.();
 		this.panel?.remove?.();
-		this.panel = null;
-		this.input = null;
-		this.resultsEl = null;
-		this.entries = [];
+		this.panel = null; this.input = null; this.resultsEl = null; this.entries = [];
 	}
 }

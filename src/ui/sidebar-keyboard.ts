@@ -96,6 +96,12 @@ export function bindSidebarKeyboardNavigation(
 		if (!focusedNav) return;
 		const navType = focusedNav.dataset.ztfNav;
 
+		if (e.key === 'F2' && navType === 'head') {
+			e.preventDefault();
+			focusedNav.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, button: 0 }));
+			return;
+		}
+
 		if (e.key === 'Enter') {
 			if (isChildControl) return;
 			e.preventDefault();

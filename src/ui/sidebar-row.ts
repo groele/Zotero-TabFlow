@@ -1,4 +1,4 @@
-import { hasZoteroDraggedItems, parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
+import { TABFLOW_DRAG_MIME, hasTabFlowDraggedTab, hasZoteroDraggedItems, parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
 import { t } from '../core/i18n.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { TrackedTab, VirtualMemberMeta } from '../core/types.ts';
@@ -89,17 +89,21 @@ export function buildSidebarTabRow(deps: SidebarRowDeps, item: TrackedTab, selec
 	deps.selection?.addCheckbox(row, item);
 	row.onclick = () => deps.actions.selectTab(item.tab.id);
 	row.oncontextmenu = (e: Event) => deps.menus.openTabMenu(e as MouseEvent, item);
-	row.onmouseenter = () => deps.hoverCard.show(row, item);
+	row.onmouseenter = () => deps.hoverCard.scheduleShow(() => deps.hoverCard.show(row, item, 'right'), 120);
 	row.onmouseleave = () => deps.hoverCard.hide();
 	row.ondragstart = (event: Event) => {
 		deps.setDraggedKey(item.key);
 		deps.setDraggedTabId(item.tab.id);
-		(event as DragEvent).dataTransfer?.setData('text/plain', item.key);
+		const dt = (event as DragEvent).dataTransfer;
+		dt?.setData(TABFLOW_DRAG_MIME, item.key);
+		dt?.setData('text/plain', item.key);
 	};
 	row.ondragover = (e: Event) => {
+		const dt = (e as DragEvent).dataTransfer;
 		const dragged = deps.getDraggedKey();
-		const hasExt = !dragged && hasZoteroDraggedItems((e as DragEvent).dataTransfer);
-		if ((!dragged || dragged === item.key) && !hasExt) return;
+		const hasCrossTab = !dragged && hasTabFlowDraggedTab(dt);
+		const hasExt = !dragged && !hasCrossTab && hasZoteroDraggedItems(dt);
+		if ((!dragged || dragged === item.key) && !hasCrossTab && !hasExt) return;
 		e.preventDefault();
 		if (hasExt) {
 			row.setAttribute('data-ztf-drop', 'join');
@@ -114,7 +118,8 @@ export function buildSidebarTabRow(deps: SidebarRowDeps, item: TrackedTab, selec
 		e.preventDefault();
 		const zone = row.getAttribute('data-ztf-drop') || 'join';
 		row.removeAttribute('data-ztf-drop');
-		const dragged = deps.getDraggedKey();
+		const dt = (e as DragEvent).dataTransfer;
+		const dragged = deps.getDraggedKey() || dt?.getData(TABFLOW_DRAG_MIME) || '';
 		const draggedTabId = deps.getDraggedTabId();
 		if (dragged && dragged !== item.key) {
 			deps.store.assignKey(dragged, item.groupId);
@@ -126,7 +131,7 @@ export function buildSidebarTabRow(deps: SidebarRowDeps, item: TrackedTab, selec
 			deps.onRefresh();
 			return;
 		}
-		const extIds = parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer);
+		const extIds = parseZoteroDraggedItemIDs(dt);
 		if (extIds.length) {
 			void (async () => {
 				for (const id of extIds) await deps.actions.openVirtualOrItem(id, item.groupId);

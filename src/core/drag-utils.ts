@@ -11,15 +11,29 @@ export function computeNativeTabMoveTarget(
 	return Math.max(1, to + (after ? 1 : 0));
 }
 
+export const TABFLOW_DRAG_MIME = 'application/x-zotero-tabflow-tab';
+
+function hasMimeType(
+	dt: { types?: Iterable<string> | { contains?: (type: string) => boolean } } | null | undefined,
+	mime: string,
+): boolean {
+	const types = dt?.types as { contains?: (type: string) => boolean; [Symbol.iterator]?: () => Iterator<string> } | undefined;
+	if (!types) return false;
+	if (typeof types.contains === 'function' && types.contains(mime)) return true;
+	return typeof types[Symbol.iterator] === 'function' && Array.from(types as Iterable<string>).includes(mime);
+}
+
+export function hasTabFlowDraggedTab(
+	dt: { types?: Iterable<string> | { contains?: (type: string) => boolean }; getData?: (type: string) => string } | null | undefined,
+): boolean {
+	return hasMimeType(dt, TABFLOW_DRAG_MIME) || Boolean(dt?.getData?.(TABFLOW_DRAG_MIME));
+}
+
 export function hasZoteroDraggedItems(
 	dt: { types?: Iterable<string> | { contains?: (type: string) => boolean }; getData?: (type: string) => string } | null | undefined,
 ): boolean {
 	if (!dt) return false;
-	const types = dt.types as { contains?: (type: string) => boolean; [Symbol.iterator]?: () => Iterator<string> } | undefined;
-	if (types && typeof types.contains === 'function' && types.contains('zotero/item')) return true;
-	if (types && typeof (types as Iterable<string>)[Symbol.iterator] === 'function') {
-		return Array.from(types as Iterable<string>).includes('zotero/item');
-	}
+	if (hasMimeType(dt, 'zotero/item')) return true;
 	return parseZoteroDraggedItemIDs(dt).length > 0;
 }
 

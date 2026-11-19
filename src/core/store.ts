@@ -2,22 +2,11 @@ import { normalizeHexColor } from './color-utils.ts';
 import { t } from './i18n.ts';
 import { PREF_PREFIX, getPref } from './prefs.ts';
 import {
-	appendManualSession,
-	appendRollingSnapshot,
-	applySessionLayout,
-	buildSessionSnapshot,
-	formatSnapshotTimestamp,
-	MAX_MANUAL_SESSIONS,
+	appendManualSession, appendRollingSnapshot, applySessionLayout,
+	buildGroupSessionSnapshot, buildSessionSnapshot, formatSnapshotTimestamp, MAX_MANUAL_SESSIONS, pruneHistory,
 } from './session-store.ts';
 import { createEmptyState } from './types.ts';
-import type {
-	TabDisplayMode,
-	TabFlowState,
-	TabGroup,
-	TabRemark,
-	TabSessionSnapshot,
-	VirtualMemberMeta,
-} from './types.ts';
+import type { TabDisplayMode, TabFlowState, TabGroup, TabRemark, TabSessionSnapshot, VirtualMemberMeta } from './types.ts';
 
 const STATE_PREF = `${PREF_PREFIX}state`;
 const AUTO_COLORS = ['#3977d5', '#8b5ac7', '#21866a', '#dc8225', '#c74646', '#298c9b', '#d064a3'];
@@ -84,11 +73,7 @@ export class TabFlowStore {
 		if (emit) this.notify();
 	}
 
-	clearAll(): void {
-		this.readOnly = false;
-		this.state = createEmptyState();
-		this.save(true);
-	}
+	clearAll(): void { this.readOnly = false; this.state = createEmptyState(); this.save(true); }
 
 	orderedGroups(): TabGroup[] {
 		const byId = new Map(this.state.groups.map((group) => [group.id, group]));
@@ -102,9 +87,7 @@ export class TabFlowStore {
 		const groups = this.orderedGroups();
 		return getPref('enableGroupHiding') ? groups.filter((group) => group.hidden !== true) : groups;
 	}
-	hiddenGroups(): TabGroup[] {
-		return getPref('enableGroupHiding') ? this.orderedGroups().filter((group) => group.hidden === true) : [];
-	}
+	hiddenGroups(): TabGroup[] { return getPref('enableGroupHiding') ? this.orderedGroups().filter((group) => group.hidden === true) : []; }
 
 	setGroupHidden(id: string, hidden: boolean, members: readonly VirtualMemberMeta[] = []): void {
 		const group = this.state.groups.find((candidate) => candidate.id === id);
@@ -211,10 +194,15 @@ export class TabFlowStore {
 
 	setCollapsed(id: string, collapsed: boolean, emit = true): void {
 		const set = new Set(this.state.collapsed);
-		if (collapsed) set.add(id);
-		else set.delete(id);
+		if (collapsed) set.add(id); else set.delete(id);
 		this.state.collapsed = [...set];
 		this.save(emit);
+	}
+
+	collapseOtherGroups(keepId: string): void {
+		const others = this.visibleGroups().filter((g) => g.id !== keepId).map((g) => g.id);
+		this.state.collapsed = [...new Set([...others])];
+		this.save();
 	}
 
 	groupOfKey(key: string | null): string {
@@ -262,23 +250,14 @@ export class TabFlowStore {
 	}
 
 	isPinned(key: string): boolean { return this.state.pinned.includes(key); }
-
 	setPinnedKeys(keys: readonly string[], pinned: boolean): void {
 		if (!keys.length) return;
 		const set = new Set(this.state.pinned);
-		for (const key of keys) {
-			if (pinned) set.add(key);
-			else set.delete(key);
-		}
+		for (const key of keys) { if (pinned) set.add(key); else set.delete(key); }
 		this.state.pinned = [...set];
 		this.save();
 	}
-
-	togglePinned(key: string): boolean {
-		const next = !this.isPinned(key);
-		this.setPinnedKeys([key], next);
-		return next;
-	}
+	togglePinned(key: string): boolean { const next = !this.isPinned(key); this.setPinnedKeys([key], next); return next; }
 	isSleeping(key: string): boolean { return this.state.sleeping.includes(key); }
 	setSleeping(key: string, sleeping: boolean): void {
 		const set = new Set(this.state.sleeping);
@@ -294,6 +273,13 @@ export class TabFlowStore {
 
 	saveSession(name: string, openKeys: string[]): TabSessionSnapshot {
 		const snapshot = buildSessionSnapshot(this.state, name || t('zotero-tabflow-session-default-name', '工作区会话'), openKeys, 'manual');
+		appendManualSession(this.state, snapshot);
+		this.save();
+		return snapshot;
+	}
+
+	saveGroupSession(name: string, groupId: string, openKeys: string[]): TabSessionSnapshot {
+		const snapshot = buildGroupSessionSnapshot(this.state, name, groupId, openKeys);
 		appendManualSession(this.state, snapshot);
 		this.save();
 		return snapshot;
@@ -317,6 +303,7 @@ export class TabFlowStore {
 
 	saveRollingSnapshot(openKeys: string[]): TabSessionSnapshot | null {
 		if (this.readOnly || !getPref('enableSessions') || !getPref('enableRollingSnapshots')) return null;
+		pruneHistory(this.state, openKeys);
 		const stamp = formatSnapshotTimestamp(Date.now());
 		const label = `${t('zotero-tabflow-rolling-prefix', '自动快照')} · ${stamp}`;
 		const snapshot = buildSessionSnapshot(this.state, label, openKeys, 'rolling');

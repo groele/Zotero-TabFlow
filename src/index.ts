@@ -7,6 +7,7 @@ import { HorizontalBarController } from './ui/horizontal-bar.ts';
 import { ItemContextMenuController } from './ui/item-context-menu.ts';
 import { PdfFolderSectionController } from './ui/pdf-folder-section.ts';
 import { PopoverController } from './ui/popovers.ts';
+import { SidebarHoverCard } from './ui/sidebar-hover.ts';
 import { SpotlightController } from './ui/spotlight.ts';
 import { TabContextMenuController } from './ui/tab-context-menu.ts';
 import { VerticalSidebarController } from './ui/vertical-sidebar.ts';
@@ -23,6 +24,7 @@ class WindowWorkspace {
 	private spotlight: SpotlightController;
 	private horizontal: HorizontalBarController;
 	private sidebar: VerticalSidebarController;
+	private hoverCard: SidebarHoverCard;
 	private notifierID: string | null = null;
 	private observer: MutationObserver | null = null;
 	private refreshTimer: number | null = null;
@@ -52,12 +54,13 @@ class WindowWorkspace {
 		this.tabMenus = new TabContextMenuController(win, doc, store, this.meta, this.actions, refresh);
 		this.itemMenus = new ItemContextMenuController(win, doc, store, this.actions, refresh);
 		this.spotlight = new SpotlightController(win, doc, store, this.meta, this.actions, this.popovers, refresh);
-		this.horizontal = new HorizontalBarController(win, doc, store, this.meta, this.actions, this.tracker, this.tabMenus, this.popovers, this.spotlight, refresh);
+		this.hoverCard = new SidebarHoverCard(win, doc, store);
+		this.horizontal = new HorizontalBarController(win, doc, store, this.meta, this.actions, this.tracker, this.tabMenus, this.popovers, this.spotlight, refresh, this.hoverCard);
 		this.sidebar = new VerticalSidebarController(win, doc, store, this.meta, this.actions, this.tabMenus, refresh, () => {
 			if (!getPref('enableSessions')) return;
 			const latest = this.store.state.sessions[0] || this.store.state.rollingSessions?.[0];
 			if (latest) void this.popovers.previewAndRestoreSession(latest);
-		});
+		}, this.hoverCard);
 	}
 
 	init(): void {
@@ -70,6 +73,7 @@ class WindowWorkspace {
 		style.textContent = WORKSPACE_CSS;
 		doc.documentElement?.append(style);
 		this.styleEl = style;
+		this.hoverCard.mount();
 
 		this.spotlight.init();
 		this.itemMenus.attach();
@@ -174,6 +178,7 @@ class WindowWorkspace {
 		this.itemMenus.dispose();
 		this.horizontal.dispose();
 		this.sidebar.dispose();
+		this.hoverCard.dispose();
 		this.styleEl?.remove();
 	}
 }

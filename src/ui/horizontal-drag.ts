@@ -1,4 +1,4 @@
-import { hasZoteroDraggedItems, parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
+import { TABFLOW_DRAG_MIME, hasTabFlowDraggedTab, hasZoteroDraggedItems, parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
 import { t } from '../core/i18n.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { TrackedTab } from '../core/types.ts';
@@ -24,10 +24,14 @@ export class HorizontalDragController {
 			this.draggedTabId = tab.tab.id;
 			this.draggedKey = tab.key;
 			this.draggedGroupId = null;
-			(e as DragEvent).dataTransfer?.setData('text/plain', tab.key);
+			const dt = (e as DragEvent).dataTransfer;
+			dt?.setData(TABFLOW_DRAG_MIME, tab.key);
+			dt?.setData('text/plain', tab.key);
 		};
 		node.ondragover = (e: Event) => {
-			if (!this.draggedKey || this.draggedKey === tab.key) return;
+			const dt = (e as DragEvent).dataTransfer;
+			if (!this.draggedKey && !hasTabFlowDraggedTab(dt)) return;
+			if (this.draggedKey === tab.key) return;
 			e.preventDefault();
 			node.setAttribute('data-ztf-drop', 'stack');
 		};
@@ -35,12 +39,13 @@ export class HorizontalDragController {
 		node.ondrop = (e: Event) => {
 			e.preventDefault();
 			node.removeAttribute('data-ztf-drop');
-			if (!this.draggedKey || this.draggedKey === tab.key) return;
+			const draggedKey = this.draggedKey || (e as DragEvent).dataTransfer?.getData(TABFLOW_DRAG_MIME) || '';
+			if (!draggedKey || draggedKey === tab.key) return;
 			const me = e as MouseEvent;
 			const rect = node.getBoundingClientRect();
 			const ratio = rect.width > 0 ? (me.clientX - rect.left) / rect.width : 0.5;
 			if (ratio < 0.25 || ratio > 0.75) {
-				this.store.assignKey(this.draggedKey, tab.groupId);
+				this.store.assignKey(draggedKey, tab.groupId);
 				if (this.draggedTabId) {
 					this.onMoveTab?.(this.draggedTabId, tab.tab.id, ratio > 0.75);
 				}
@@ -49,10 +54,10 @@ export class HorizontalDragController {
 				if (Services.prompt.prompt(this.win, t('zotero-tabflow-stack-group-title', '叠放新建分组'), t('zotero-tabflow-stack-group-prompt', '将两篇文献合并到新分组：'), val, null, {}) && val.value.trim()) {
 					const g = this.store.ensureGroup(val.value);
 					this.store.assignKey(tab.key, g.id);
-					this.store.assignKey(this.draggedKey, g.id);
+					this.store.assignKey(draggedKey, g.id);
 				}
 			} else {
-				this.store.assignKey(this.draggedKey, tab.groupId);
+				this.store.assignKey(draggedKey, tab.groupId);
 			}
 			this.clear();
 			this.onRefresh();
@@ -69,9 +74,10 @@ export class HorizontalDragController {
 			(e as DragEvent).dataTransfer?.setData('application/x-zotero-tabflow-group', groupId || 'ungrouped');
 		};
 		heading.ondragover = (e: Event) => {
-			if (!this.draggedKey && this.draggedGroupId === null && !hasZoteroDraggedItems((e as DragEvent).dataTransfer)) return;
+			const dt = (e as DragEvent).dataTransfer;
+			if (!this.draggedKey && this.draggedGroupId === null && !hasTabFlowDraggedTab(dt) && !hasZoteroDraggedItems(dt)) return;
 			e.preventDefault();
-			if (this.draggedKey && collapsed && this.hoverTimer === null) {
+			if ((this.draggedKey || hasTabFlowDraggedTab(dt)) && collapsed && this.hoverTimer === null) {
 				this.hoverTimer = this.win.setTimeout(() => {
 					this.hoverTimer = null;
 					this.store.setCollapsed(groupId, false);
@@ -86,14 +92,16 @@ export class HorizontalDragController {
 		};
 		heading.ondrop = (e: Event) => {
 			e.preventDefault();
+			const dt = (e as DragEvent).dataTransfer;
+			const droppedKey = this.draggedKey || dt?.getData(TABFLOW_DRAG_MIME) || '';
 			if (this.draggedGroupId !== null && this.draggedGroupId !== groupId) {
 				const rect = heading.getBoundingClientRect();
 				const after = rect.width > 0 ? (e as MouseEvent).clientX >= rect.left + rect.width / 2 : true;
 				this.store.moveGroup(this.draggedGroupId, groupId, after);
-			} else if (this.draggedKey) {
-				this.store.assignKey(this.draggedKey, groupId);
+			} else if (droppedKey) {
+				this.store.assignKey(droppedKey, groupId);
 			} else {
-				const extItems = parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer);
+				const extItems = parseZoteroDraggedItemIDs(dt);
 				if (extItems.length) this.onOpenItemsInGroup?.(extItems, groupId);
 			}
 			this.clear();

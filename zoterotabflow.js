@@ -222,6 +222,80 @@
     const mm = String(d.getMinutes()).padStart(2, "0");
     return `${hh}:${mm}`;
   }
+  function buildGroupSessionSnapshot(state, name, groupId, openKeys) {
+    const targetGroup = groupId ? state.groups.find((g) => g.id === groupId) : { id: `g-exp-${Date.now().toString(36)}`, name: state.ungroupedName || name.trim().slice(0, 60) || t("zotero-tabflow-saved-ungrouped-name", "未分组文献"), color: state.ungroupedColor || "#737373" };
+    const exportedId = targetGroup?.id || groupId;
+    const validIds = new Set(state.groups.map((g) => g.id));
+    const belongs = (key) => groupId ? state.assignments[key] === groupId : !validIds.has(state.assignments[key] || "");
+    const scopedOpen = [...new Set(openKeys)].filter(belongs);
+    const scopedVirtual = Object.values(state.virtualMembers).filter((m) => belongs(m.key)).map(({ itemID, parentItemID, ...portable }) => portable);
+    const scopedKeys = /* @__PURE__ */ new Set([...scopedOpen, ...scopedVirtual.map((m) => m.key)]);
+    for (const k of Object.keys(state.assignments)) if (belongs(k)) scopedKeys.add(k);
+    const assignments = Object.fromEntries([...scopedKeys].map((k) => [k, exportedId]));
+    const remarks = {};
+    for (const k of scopedKeys) if (state.remarks[k]) remarks[k] = { ...state.remarks[k] };
+    const now = Date.now();
+    return {
+      id: `s-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      name: name.trim().slice(0, 60) || targetGroup?.name || t("zotero-tabflow-session-default-name", "工作区会话"),
+      createdAt: now,
+      groups: targetGroup ? [{ ...targetGroup, hidden: void 0 }] : [],
+      assignments,
+      pinned: state.pinned.filter((k) => scopedKeys.has(k)),
+      openKeys: scopedOpen,
+      virtualMembers: scopedVirtual,
+      order: targetGroup ? [targetGroup.id] : [],
+      collapsed: [],
+      remarks,
+      kind: "manual"
+    };
+  }
+  function updateExistingSession(state, id, openKeys) {
+    const idx = state.sessions.findIndex((s) => s.id === id);
+    if (idx < 0) return null;
+    const current = state.sessions[idx];
+    const next = buildSessionSnapshot(state, current.name, openKeys, current.kind === "template" ? "template" : "manual");
+    const updated = { ...next, id: current.id, name: current.name };
+    state.sessions[idx] = updated;
+    return updated;
+  }
+  function renameExistingSession(state, id, name) {
+    const clean = name.trim().slice(0, 60);
+    const target = clean ? state.sessions.find((s) => s.id === id) : null;
+    if (!target) return false;
+    target.name = clean;
+    return true;
+  }
+  function pruneHistory(state, openKeys, maxOrphanEntries = 500, maxAgeMs = 180 * 864e5, now = Date.now()) {
+    const keep = /* @__PURE__ */ new Set([
+      ...openKeys,
+      ...state.pinned,
+      ...Object.keys(state.virtualMembers),
+      ...Object.keys(state.assignments),
+      ...Object.keys(state.remarks)
+    ]);
+    const cutoff = now - maxAgeMs;
+    const orphans = [];
+    let removed = 0;
+    for (const [key, act] of Object.entries(state.history)) {
+      if (keep.has(key)) continue;
+      const ts = act?.lastViewed ?? act?.firstSeen ?? 0;
+      if (!ts || ts < cutoff) {
+        delete state.history[key];
+        removed++;
+      } else {
+        orphans.push([key, ts]);
+      }
+    }
+    if (orphans.length > maxOrphanEntries) {
+      orphans.sort((a, b) => b[1] - a[1]);
+      for (const [key] of orphans.slice(maxOrphanEntries)) {
+        delete state.history[key];
+        removed++;
+      }
+    }
+    return removed;
+  }
 
   // src/core/types.ts
   function createEmptyState() {
@@ -434,6 +508,11 @@
       this.state.collapsed = [...set];
       this.save(emit);
     }
+    collapseOtherGroups(keepId) {
+      const others = this.visibleGroups().filter((g) => g.id !== keepId).map((g) => g.id);
+      this.state.collapsed = [.../* @__PURE__ */ new Set([...others])];
+      this.save();
+    }
     groupOfKey(key) {
       if (!key) return "";
       const id = this.state.assignments[key];
@@ -516,6 +595,12 @@
       this.save();
       return snapshot;
     }
+    saveGroupSession(name, groupId, openKeys) {
+      const snapshot = buildGroupSessionSnapshot(this.state, name, groupId, openKeys);
+      appendManualSession(this.state, snapshot);
+      this.save();
+      return snapshot;
+    }
     savePreReplaceSnapshot(openKeys) {
       const stamp = formatSnapshotTimestamp(Date.now());
       const label = `${t("zotero-tabflow-session-pre-replace-prefix", "替换前备份")} · ${stamp}`;
@@ -532,6 +617,7 @@
     }
     saveRollingSnapshot(openKeys) {
       if (this.readOnly || !getPref("enableSessions") || !getPref("enableRollingSnapshots")) return null;
+      pruneHistory(this.state, openKeys);
       const stamp = formatSnapshotTimestamp(Date.now());
       const label = `${t("zotero-tabflow-rolling-prefix", "自动快照")} · ${stamp}`;
       const snapshot = buildSessionSnapshot(this.state, label, openKeys, "rolling");
@@ -763,13 +849,19 @@
     if (from < 1 || to < 0 || from === to) return -1;
     return Math.max(1, to + (after ? 1 : 0));
   }
+  var TABFLOW_DRAG_MIME = "application/x-zotero-tabflow-tab";
+  function hasMimeType(dt, mime) {
+    const types = dt?.types;
+    if (!types) return false;
+    if (typeof types.contains === "function" && types.contains(mime)) return true;
+    return typeof types[Symbol.iterator] === "function" && Array.from(types).includes(mime);
+  }
+  function hasTabFlowDraggedTab(dt) {
+    return hasMimeType(dt, TABFLOW_DRAG_MIME) || Boolean(dt?.getData?.(TABFLOW_DRAG_MIME));
+  }
   function hasZoteroDraggedItems(dt) {
     if (!dt) return false;
-    const types = dt.types;
-    if (types && typeof types.contains === "function" && types.contains("zotero/item")) return true;
-    if (types && typeof types[Symbol.iterator] === "function") {
-      return Array.from(types).includes("zotero/item");
-    }
+    if (hasMimeType(dt, "zotero/item")) return true;
     return parseZoteroDraggedItemIDs(dt).length > 0;
   }
   function parseZoteroDraggedItemIDs(dt) {
@@ -1310,10 +1402,14 @@
         this.draggedTabId = tab.tab.id;
         this.draggedKey = tab.key;
         this.draggedGroupId = null;
-        e.dataTransfer?.setData("text/plain", tab.key);
+        const dt = e.dataTransfer;
+        dt?.setData(TABFLOW_DRAG_MIME, tab.key);
+        dt?.setData("text/plain", tab.key);
       };
       node.ondragover = (e) => {
-        if (!this.draggedKey || this.draggedKey === tab.key) return;
+        const dt = e.dataTransfer;
+        if (!this.draggedKey && !hasTabFlowDraggedTab(dt)) return;
+        if (this.draggedKey === tab.key) return;
         e.preventDefault();
         node.setAttribute("data-ztf-drop", "stack");
       };
@@ -1321,12 +1417,13 @@
       node.ondrop = (e) => {
         e.preventDefault();
         node.removeAttribute("data-ztf-drop");
-        if (!this.draggedKey || this.draggedKey === tab.key) return;
+        const draggedKey = this.draggedKey || e.dataTransfer?.getData(TABFLOW_DRAG_MIME) || "";
+        if (!draggedKey || draggedKey === tab.key) return;
         const me = e;
         const rect = node.getBoundingClientRect();
         const ratio = rect.width > 0 ? (me.clientX - rect.left) / rect.width : 0.5;
         if (ratio < 0.25 || ratio > 0.75) {
-          this.store.assignKey(this.draggedKey, tab.groupId);
+          this.store.assignKey(draggedKey, tab.groupId);
           if (this.draggedTabId) {
             this.onMoveTab?.(this.draggedTabId, tab.tab.id, ratio > 0.75);
           }
@@ -1335,10 +1432,10 @@
           if (Services.prompt.prompt(this.win, t("zotero-tabflow-stack-group-title", "叠放新建分组"), t("zotero-tabflow-stack-group-prompt", "将两篇文献合并到新分组："), val, null, {}) && val.value.trim()) {
             const g = this.store.ensureGroup(val.value);
             this.store.assignKey(tab.key, g.id);
-            this.store.assignKey(this.draggedKey, g.id);
+            this.store.assignKey(draggedKey, g.id);
           }
         } else {
-          this.store.assignKey(this.draggedKey, tab.groupId);
+          this.store.assignKey(draggedKey, tab.groupId);
         }
         this.clear();
         this.onRefresh();
@@ -1354,9 +1451,10 @@
         e.dataTransfer?.setData("application/x-zotero-tabflow-group", groupId || "ungrouped");
       };
       heading.ondragover = (e) => {
-        if (!this.draggedKey && this.draggedGroupId === null && !hasZoteroDraggedItems(e.dataTransfer)) return;
+        const dt = e.dataTransfer;
+        if (!this.draggedKey && this.draggedGroupId === null && !hasTabFlowDraggedTab(dt) && !hasZoteroDraggedItems(dt)) return;
         e.preventDefault();
-        if (this.draggedKey && collapsed && this.hoverTimer === null) {
+        if ((this.draggedKey || hasTabFlowDraggedTab(dt)) && collapsed && this.hoverTimer === null) {
           this.hoverTimer = this.win.setTimeout(() => {
             this.hoverTimer = null;
             this.store.setCollapsed(groupId, false);
@@ -1371,14 +1469,16 @@
       };
       heading.ondrop = (e) => {
         e.preventDefault();
+        const dt = e.dataTransfer;
+        const droppedKey = this.draggedKey || dt?.getData(TABFLOW_DRAG_MIME) || "";
         if (this.draggedGroupId !== null && this.draggedGroupId !== groupId) {
           const rect = heading.getBoundingClientRect();
           const after = rect.width > 0 ? e.clientX >= rect.left + rect.width / 2 : true;
           this.store.moveGroup(this.draggedGroupId, groupId, after);
-        } else if (this.draggedKey) {
-          this.store.assignKey(this.draggedKey, groupId);
+        } else if (droppedKey) {
+          this.store.assignKey(droppedKey, groupId);
         } else {
-          const extItems = parseZoteroDraggedItemIDs(e.dataTransfer);
+          const extItems = parseZoteroDraggedItemIDs(dt);
           if (extItems.length) this.onOpenItemsInGroup?.(extItems, groupId);
         }
         this.clear();
@@ -1996,18 +2096,18 @@
           }, ro));
         }
         btns.append(this.btn(t("zotero-tabflow-hub-dissolve", "解散"), "ztf-hub-btn danger", () => {
-          if (Services.prompt.confirm(this.win, t("zotero-tabflow-dissolve-group", "解散分组"), t("zotero-tabflow-dissolve-group-confirm", `解散“${g.name}”？标签页将保留并回到未分组。`, { name: g.name }))) {
-            try {
-              if (!this.store.dissolveGroup(g.id)) {
-                Services.prompt.alert(this.win, t("zotero-tabflow-dissolve-group", "解散分组"), t("zotero-tabflow-dissolve-group-failed", "无法解散分组：数据为只读，或分组已不存在。"));
-                return;
-              }
-              this.refreshHiddenFocus(index);
-              this.callbacks.onRefresh();
-            } catch (error) {
-              Zotero.logError(error);
-              Services.prompt.alert(this.win, t("zotero-tabflow-dissolve-group", "解散分组"), t("zotero-tabflow-dissolve-group-failed", "无法解散分组：数据为只读，或分组已不存在。"));
+          if (!Services.prompt.confirm(this.win, t("zotero-tabflow-dissolve-group", "解散分组"), t("zotero-tabflow-dissolve-group-confirm", `解散“${g.name}”？标签页将保留并回到未分组。`, { name: g.name }))) return;
+          const warn = () => Services.prompt.alert(this.win, t("zotero-tabflow-dissolve-group", "解散分组"), t("zotero-tabflow-dissolve-group-failed", "无法解散分组：数据为只读，或分组已不存在。"));
+          try {
+            if (!this.store.dissolveGroup(g.id)) {
+              warn();
+              return;
             }
+            this.refreshHiddenFocus(index);
+            this.callbacks.onRefresh();
+          } catch (error) {
+            Zotero.logError(error);
+            warn();
           }
         }, ro));
         card.append(info, btns);
@@ -2073,6 +2173,26 @@
             this.renderContent();
           }
         }, ro));
+      } else if (s.kind !== "pre-replace") {
+        btns.append(
+          this.btn(t("zotero-tabflow-hub-update", "更新"), "ztf-hub-btn", () => {
+            const title2 = t("zotero-tabflow-hub-update", "更新");
+            const msg = t("zotero-tabflow-hub-update-confirm", `用当前打开的文献与分组状态覆盖「${s.name}」？`, { name: s.name });
+            if (!Services.prompt.confirm(this.win, title2, msg)) return;
+            if (updateExistingSession(this.store.state, s.id, this.meta.buildTrackedTabs().map((tab) => tab.key))) {
+              this.store.save();
+              this.renderContent();
+            }
+          }, ro),
+          this.btn(t("zotero-tabflow-hub-rename", "重命名"), "ztf-hub-btn", () => {
+            const val = { value: s.name };
+            if (!Services.prompt.prompt(this.win, t("zotero-tabflow-hub-rename", "重命名"), t("zotero-tabflow-hub-rename-prompt", "请输入新的会话名称："), val, null, {})) return;
+            if (renameExistingSession(this.store.state, s.id, val.value)) {
+              this.store.save();
+              this.renderContent();
+            }
+          }, ro)
+        );
       }
       btns.append(this.btn(t("zotero-tabflow-hub-delete", "删除"), "ztf-hub-btn danger", () => {
         this.store.deleteSession(s.id);
@@ -2095,7 +2215,7 @@
 
   // src/ui/horizontal-bar.ts
   var HorizontalBarController = class {
-    constructor(win, doc, store, meta, actions, tracker, menus, popovers, spotlight, onRefresh) {
+    constructor(win, doc, store, meta, actions, tracker, menus, popovers, spotlight, onRefresh, hoverCard) {
       this.win = win;
       this.doc = doc;
       this.store = store;
@@ -2106,6 +2226,7 @@
       this.popovers = popovers;
       this.spotlight = spotlight;
       this.onRefresh = onRefresh;
+      this.hoverCard = hoverCard;
       this.drag = new HorizontalDragController(
         win,
         store,
@@ -2163,6 +2284,7 @@
     }
     bindWheel(area) {
       area.addEventListener("wheel", (e) => {
+        this.hoverCard?.hide();
         e.stopPropagation();
         if (e.ctrlKey || area.scrollWidth <= area.clientWidth) return;
         e.preventDefault();
@@ -2255,6 +2377,9 @@
               this.onRefresh();
             });
             vNode.oncontextmenu = (e) => this.menus.openVirtualMenu(e, v, g.id);
+            vNode.onmouseenter = () => this.hoverCard?.scheduleShow(() => this.hoverCard?.showVirtual(vNode, v, g.name, "below"));
+            vNode.onmouseleave = () => this.hoverCard?.hide();
+            vNode.onmousedown = () => this.hoverCard?.hide();
             nodes.append(vNode);
           }
           section.body.replaceChildren(nodes);
@@ -2327,7 +2452,13 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         void this.actions.closeTab(tab.tab.id, true).then(this.onRefresh);
       };
       node.append(label, closeBtn);
-      node.onclick = () => this.actions.selectTab(tab.tab.id);
+      node.onclick = () => {
+        this.hoverCard?.hide();
+        this.actions.selectTab(tab.tab.id);
+      };
+      node.onmouseenter = () => this.hoverCard?.scheduleShow(() => this.hoverCard?.show(node, tab, "below"));
+      node.onmouseleave = () => this.hoverCard?.hide();
+      node.onmousedown = () => this.hoverCard?.hide();
       node.onauxclick = (e) => {
         if (e.button === 1) {
           e.preventDefault();
@@ -2408,6 +2539,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       this.toolbar.render(this.toolbarActions, actions);
     }
     dispose() {
+      this.hoverCard?.hide();
       for (const group of this.groupSections.values()) group.dispose();
       this.groupSections.clear();
       this.drag.clear();
@@ -3071,6 +3203,102 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     }
   };
 
+  // src/ui/sidebar-hover.ts
+  var SidebarHoverCard = class {
+    win;
+    doc;
+    store;
+    card = null;
+    showTimer = null;
+    constructor(win, doc, store) {
+      this.win = win;
+      this.doc = doc;
+      this.store = store;
+    }
+    mount() {
+      if (this.card) return;
+      const card = this.doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      card.id = "ztf-hover-card";
+      card.hidden = true;
+      this.doc.documentElement?.append(card);
+      this.card = card;
+    }
+    scheduleShow(fn, delayMs = 180) {
+      this.cancelTimer();
+      if (typeof this.win?.setTimeout === "function") {
+        this.showTimer = this.win.setTimeout(() => {
+          this.showTimer = null;
+          fn();
+        }, delayMs);
+      } else {
+        fn();
+      }
+    }
+    cancelTimer() {
+      if (this.showTimer !== null) {
+        this.win?.clearTimeout?.(this.showTimer);
+        this.showTimer = null;
+      }
+    }
+    show(anchor, tab, placement = "right") {
+      if (!getPref("enableHoverPreview") || !this.card) return;
+      const reader = Zotero.Reader?.getByTabID?.(tab.tab.id);
+      const pageIdx = reader?.state?.pageIndex;
+      const numPages = reader?._internalReader?._pdfDocument?.numPages;
+      const pageText = typeof pageIdx === "number" && pageIdx >= 0 ? typeof numPages === "number" && numPages > 0 ? t("zotero-tabflow-hover-page-of", `第 ${pageIdx + 1} / ${numPages} 页`, { page: pageIdx + 1, total: numPages }) : t("zotero-tabflow-hover-page", `第 ${pageIdx + 1} 页`, { page: pageIdx + 1 }) : "";
+      const itemObj = tab.itemID ? Zotero.Items.get(tab.itemID) : null;
+      const annots = itemObj?.isAttachment?.() && typeof itemObj?.getAnnotations === "function" ? itemObj.getAnnotations()?.length : void 0;
+      const annotText = typeof annots === "number" && annots >= 0 ? t("zotero-tabflow-hover-annots", `批注 ${annots} 条`, { count: annots }) : "";
+      const readerMeta = [pageText, annotText].filter(Boolean).join(" · ");
+      this.renderCard(anchor, tab.key, tab.title, tab.creatorYear, tab.source, tab.collection, readerMeta, placement);
+    }
+    showVirtual(anchor, member, groupName = "", placement = "below") {
+      if (!getPref("enableHoverPreview") || !this.card) return;
+      const col = [member.collection, groupName].filter(Boolean).join(" · ");
+      this.renderCard(anchor, member.key, member.title, member.creatorYear, member.source, col, t("zotero-tabflow-spot-virtual-hint", "虚拟保留"), placement);
+    }
+    renderCard(anchor, key, title, creatorYear, source, collection, extraMeta, placement) {
+      if (!this.card) return;
+      const h = this.store.state.history[key];
+      const last = h?.lastViewed;
+      const days = last ? Math.max(0, Math.floor((Date.now() - last) / 864e5)) : 0;
+      const remark = getPref("enableTabRemarks") ? this.store.getRemark(key).note : "";
+      this.card.textContent = "";
+      const mk = (cls, text) => {
+        const d = this.doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+        d.className = cls;
+        d.textContent = text;
+        return d;
+      };
+      const lastText = !last ? t("zotero-tabflow-hover-never-viewed", "尚未查看") : days === 0 ? t("zotero-tabflow-hover-today", "今天") : t("zotero-tabflow-hover-days-ago", `${days} 天前`, { days });
+      this.card.append(
+        mk("ztf-hc-title", title),
+        mk("ztf-hc-meta", [creatorYear, source].filter(Boolean).join(" · ") || t("zotero-tabflow-hover-no-meta", "暂无作者/期刊元数据")),
+        mk("ztf-hc-meta", t("zotero-tabflow-hover-collection-last", `集合：${collection} · 上次阅读：${lastText}`, { collection, time: lastText }))
+      );
+      if (extraMeta) this.card.append(mk("ztf-hc-meta", extraMeta));
+      if (remark) this.card.append(mk("ztf-hc-note", t("zotero-tabflow-hover-remark", `备注：${remark}`, { note: remark })));
+      const rect = anchor.getBoundingClientRect();
+      this.card.hidden = false;
+      const cardRect = this.card.getBoundingClientRect?.();
+      const cardW = cardRect?.width ? Math.ceil(cardRect.width) + 16 : 332;
+      const cardH = cardRect?.height ? Math.ceil(cardRect.height) + 12 : 165;
+      const left = placement === "below" ? Math.min(rect.left, this.win.innerWidth - cardW) : Math.min(rect.right + 8, this.win.innerWidth - cardW);
+      const top = placement === "below" ? Math.min(rect.bottom + 6, this.win.innerHeight - cardH) : Math.min(rect.top, this.win.innerHeight - cardH);
+      this.card.style.left = `${Math.max(8, left)}px`;
+      this.card.style.top = `${Math.max(8, top)}px`;
+    }
+    hide() {
+      this.cancelTimer();
+      if (this.card && !this.card.hidden) this.card.hidden = true;
+    }
+    dispose() {
+      this.cancelTimer();
+      this.card?.remove();
+      this.card = null;
+    }
+  };
+
   // src/ui/spotlight.ts
   var SpotlightController = class {
     win;
@@ -3151,7 +3379,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
           const item = this.entries[this.activeIndex];
           if (item) {
             item.run();
-            this.close();
+            if (!item.keepOpen) this.close();
           }
         }
       });
@@ -3176,7 +3404,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       this.panel.openPopup(target, "after_start", 0, 8, false, false);
     }
     warmLibraryCache() {
-      if (Date.now() - this.cacheTimestamp < 3e4 && this.libraryCache.length) return Promise.resolve();
+      if (Date.now() - this.cacheTimestamp < 12e4 && this.libraryCache.length) return Promise.resolve();
       if (this.libraryLoad) return this.libraryLoad;
       this.libraryLoading = true;
       this.libraryLoad = (async () => {
@@ -3367,7 +3595,20 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
           }] : []
         ] : []
       ].filter((c) => !terms.length || terms.every((term) => `${c.label} ${c.hint}`.toLowerCase().includes(term)));
-      const sections = [
+      const helpMode = q === "?";
+      const fill = (prefix) => {
+        if (this.input) {
+          this.input.value = prefix;
+          this.input.focus();
+          this.renderResults();
+        }
+      };
+      const helpEntries = helpMode ? [
+        { label: "@关键词", hint: t("zotero-tabflow-spot-help-lib", "搜索全部文库中的文献（不限于已打开标签）"), keepOpen: true, run: () => fill("@") },
+        { label: ">tabs", hint: t("zotero-tabflow-spot-help-tabs", "列出所有打开标签并按最近阅读时间排序"), keepOpen: true, run: () => fill(">tabs ") },
+        { label: ">命令", hint: t("zotero-tabflow-spot-help-cmd", "筛选保存工作区、切换侧边栏等快捷操作"), keepOpen: true, run: () => fill(">") }
+      ] : [];
+      const sections = helpMode ? [[t("zotero-tabflow-spot-help-hint", "搜索语法提示"), helpEntries]] : [
         [t("zotero-tabflow-spot-section-tabs", "打开的标签"), allTabEntries],
         [t("zotero-tabflow-spot-section-library", "文库文献"), libraryEntries],
         [t("zotero-tabflow-spot-section-hidden", "隐藏项目"), [...hiddenDocuments, ...hiddenEntries]],
@@ -3403,7 +3644,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       btn.append(main, hint);
       btn.onclick = () => {
         entry.run();
-        this.close();
+        if (!entry.keepOpen) this.close();
       };
       this.resultsEl?.append(btn);
     }
@@ -3629,7 +3870,20 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
               this.onRefresh();
             });
           });
+          this.item(popup, `📦 ${t("zotero-tabflow-menu-save-group-workspace", "仅保存本组到工作区…")}`, () => {
+            this.defer(() => {
+              const baseName = group.name || t("zotero-tabflow-session-default-name", "工作区会话");
+              const val = { value: `${baseName} · ${formatSnapshotTimestamp(Date.now())}` };
+              if (!Services.prompt.prompt(this.win, t("zotero-tabflow-hub-save-session", "保存工作区"), t("zotero-tabflow-sessions-save-prompt", "请输入会话名称："), val, null, {})) return;
+              this.store.saveGroupSession(val.value, group.id, this.meta.buildTrackedTabs().map((tab) => tab.key));
+              this.onRefresh();
+            });
+          });
         }
+        this.item(popup, t("zotero-tabflow-menu-collapse-others", "折叠其他分组"), () => {
+          this.store.collapseOtherGroups(group.id);
+          this.onRefresh();
+        }, { disabled: !this.store.visibleGroups().some((g) => g.id !== group.id) });
         if (virtualMembers.length) {
           this.item(popup, `▶ ${t("zotero-tabflow-menu-open-virtual-all", `打开组内全部虚拟文献 (${virtualMembers.length})`, { count: virtualMembers.length })}`, () => {
             void (async () => {
@@ -3695,68 +3949,6 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         p.remove();
       }
       this.popups.clear();
-    }
-  };
-
-  // src/ui/sidebar-hover.ts
-  var SidebarHoverCard = class {
-    constructor(win, doc, store) {
-      this.win = win;
-      this.doc = doc;
-      this.store = store;
-    }
-    card = null;
-    mount() {
-      if (this.card) return;
-      const card = this.doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-      card.id = "ztf-hover-card";
-      card.hidden = true;
-      this.doc.documentElement?.append(card);
-      this.card = card;
-    }
-    show(anchor, tab) {
-      if (!getPref("enableHoverPreview") || !this.card) return;
-      const h = this.store.state.history[tab.key];
-      const last = h?.lastViewed;
-      const days = last ? Math.max(0, Math.floor((Date.now() - last) / 864e5)) : 0;
-      const remark = getPref("enableTabRemarks") ? this.store.getRemark(tab.key).note : "";
-      const reader = Zotero.Reader?.getByTabID?.(tab.tab.id);
-      const pageIdx = reader?.state?.pageIndex;
-      const numPages = reader?._internalReader?._pdfDocument?.numPages;
-      const pageText = typeof pageIdx === "number" && pageIdx >= 0 ? typeof numPages === "number" && numPages > 0 ? t("zotero-tabflow-hover-page-of", `第 ${pageIdx + 1} / ${numPages} 页`, { page: pageIdx + 1, total: numPages }) : t("zotero-tabflow-hover-page", `第 ${pageIdx + 1} 页`, { page: pageIdx + 1 }) : "";
-      const itemObj = tab.itemID ? Zotero.Items.get(tab.itemID) : null;
-      const annots = itemObj?.isAttachment?.() && typeof itemObj?.getAnnotations === "function" ? itemObj.getAnnotations()?.length : void 0;
-      const annotText = typeof annots === "number" && annots >= 0 ? t("zotero-tabflow-hover-annots", `批注 ${annots} 条`, { count: annots }) : "";
-      const readerMeta = [pageText, annotText].filter(Boolean).join(" · ");
-      this.card.textContent = "";
-      const mk = (cls, text) => {
-        const d = this.doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-        d.className = cls;
-        d.textContent = text;
-        return d;
-      };
-      const lastText = !last ? t("zotero-tabflow-hover-never-viewed", "尚未查看") : days === 0 ? t("zotero-tabflow-hover-today", "今天") : t("zotero-tabflow-hover-days-ago", `${days} 天前`, { days });
-      this.card.append(
-        mk("ztf-hc-title", tab.title),
-        mk("ztf-hc-meta", [tab.creatorYear, tab.source].filter(Boolean).join(" · ") || t("zotero-tabflow-hover-no-meta", "暂无作者/期刊元数据")),
-        mk("ztf-hc-meta", t("zotero-tabflow-hover-collection-last", `集合：${tab.collection} · 上次阅读：${lastText}`, { collection: tab.collection, time: lastText }))
-      );
-      if (readerMeta) this.card.append(mk("ztf-hc-meta", readerMeta));
-      if (remark) this.card.append(mk("ztf-hc-note", t("zotero-tabflow-hover-remark", `备注：${remark}`, { note: remark })));
-      const rect = anchor.getBoundingClientRect();
-      this.card.hidden = false;
-      const cardRect = this.card.getBoundingClientRect?.();
-      const cardW = cardRect?.width ? Math.ceil(cardRect.width) + 16 : 332;
-      const cardH = cardRect?.height ? Math.ceil(cardRect.height) + 12 : 165;
-      this.card.style.left = `${Math.max(0, Math.min(rect.right + 8, this.win.innerWidth - cardW))}px`;
-      this.card.style.top = `${Math.max(0, Math.min(rect.top, this.win.innerHeight - cardH))}px`;
-    }
-    hide() {
-      if (this.card) this.card.hidden = true;
-    }
-    dispose() {
-      this.card?.remove();
-      this.card = null;
     }
   };
 
@@ -3837,6 +4029,11 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       }
       if (!focusedNav) return;
       const navType = focusedNav.dataset.ztfNav;
+      if (e.key === "F2" && navType === "head") {
+        e.preventDefault();
+        focusedNav.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+        return;
+      }
       if (e.key === "Enter") {
         if (isChildControl) return;
         e.preventDefault();
@@ -3933,17 +4130,21 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     deps.selection?.addCheckbox(row, item);
     row.onclick = () => deps.actions.selectTab(item.tab.id);
     row.oncontextmenu = (e) => deps.menus.openTabMenu(e, item);
-    row.onmouseenter = () => deps.hoverCard.show(row, item);
+    row.onmouseenter = () => deps.hoverCard.scheduleShow(() => deps.hoverCard.show(row, item, "right"), 120);
     row.onmouseleave = () => deps.hoverCard.hide();
     row.ondragstart = (event) => {
       deps.setDraggedKey(item.key);
       deps.setDraggedTabId(item.tab.id);
-      event.dataTransfer?.setData("text/plain", item.key);
+      const dt = event.dataTransfer;
+      dt?.setData(TABFLOW_DRAG_MIME, item.key);
+      dt?.setData("text/plain", item.key);
     };
     row.ondragover = (e) => {
+      const dt = e.dataTransfer;
       const dragged = deps.getDraggedKey();
-      const hasExt = !dragged && hasZoteroDraggedItems(e.dataTransfer);
-      if ((!dragged || dragged === item.key) && !hasExt) return;
+      const hasCrossTab = !dragged && hasTabFlowDraggedTab(dt);
+      const hasExt = !dragged && !hasCrossTab && hasZoteroDraggedItems(dt);
+      if ((!dragged || dragged === item.key) && !hasCrossTab && !hasExt) return;
       e.preventDefault();
       if (hasExt) {
         row.setAttribute("data-ztf-drop", "join");
@@ -3958,7 +4159,8 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       e.preventDefault();
       const zone = row.getAttribute("data-ztf-drop") || "join";
       row.removeAttribute("data-ztf-drop");
-      const dragged = deps.getDraggedKey();
+      const dt = e.dataTransfer;
+      const dragged = deps.getDraggedKey() || dt?.getData(TABFLOW_DRAG_MIME) || "";
       const draggedTabId = deps.getDraggedTabId();
       if (dragged && dragged !== item.key) {
         deps.store.assignKey(dragged, item.groupId);
@@ -3970,7 +4172,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         deps.onRefresh();
         return;
       }
-      const extIds = parseZoteroDraggedItemIDs(e.dataTransfer);
+      const extIds = parseZoteroDraggedItemIDs(dt);
       if (extIds.length) {
         void (async () => {
           for (const id of extIds) await deps.actions.openVirtualOrItem(id, item.groupId);
@@ -4226,7 +4428,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
 
   // src/ui/vertical-sidebar.ts
   var VerticalSidebarController = class {
-    constructor(win, doc, store, meta, actions, menus, onRefresh, onRestoreLastSession) {
+    constructor(win, doc, store, meta, actions, menus, onRefresh, onRestoreLastSession, sharedHoverCard) {
       this.win = win;
       this.doc = doc;
       this.store = store;
@@ -4235,7 +4437,8 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       this.menus = menus;
       this.onRefresh = onRefresh;
       this.onRestoreLastSession = onRestoreLastSession;
-      this.hoverCard = new SidebarHoverCard(win, doc, store);
+      this.ownsHoverCard = !sharedHoverCard;
+      this.hoverCard = sharedHoverCard ?? new SidebarHoverCard(win, doc, store);
     }
     sidebar = null;
     listEl = null;
@@ -4243,6 +4446,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     selection = null;
     searchInput = null;
     hoverCard;
+    ownsHoverCard;
     viewMode = "groups";
     draggedKey = null;
     draggedTabId = null;
@@ -4338,7 +4542,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         this.renderList();
       });
       deckParent.insertBefore(aside, deck);
-      this.hoverCard.mount();
+      if (this.ownsHoverCard) this.hoverCard.mount();
       this.sidebar = aside;
       this.listEl = list;
       this.statusEl = statusBar;
@@ -4441,31 +4645,39 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         this.listEl.replaceChildren();
         if (this.viewMode === "collection") {
           const colors = ["#3977d5", "#21866a", "#8b5ac7", "#dc8225"];
-          [...indexGroupMembers(allTracked, (tab) => tab.collection)].forEach(([col, items], i) => {
-            const sec = buildSidebarSection(this.doc, this.collapsedSections, `col:${col}`, col, colors[i % colors.length], items.length, () => {
+          const openCols = indexGroupMembers(allTracked, (tab) => tab.collection);
+          const virtCols = indexGroupMembers(matchingVirtuals, (m) => m.collection);
+          [.../* @__PURE__ */ new Set([...openCols.keys(), ...virtCols.keys()])].forEach((col, i) => {
+            const items = openCols.get(col) ?? [];
+            const vItems = virtCols.get(col) ?? [];
+            const sec = buildSidebarSection(this.doc, this.collapsedSections, `col:${col}`, col, colors[i % colors.length], items.length + vItems.length, () => {
               const g = this.store.ensureGroup(col);
-              this.store.assignKeys(items.map((x) => x.key), g.id);
+              this.store.assignKeys([...items, ...vItems].map((x) => x.key), g.id);
               this.viewMode = "groups";
               this.onRefresh();
             });
             const body = sec.querySelector(".ztf-sb-group-body");
             for (const item of items) body.append(buildSidebarTabRow(this.rowDeps(), item, selectedID));
+            for (const v of vItems) body.append(buildSidebarVirtualRow(this.rowDeps(), v, this.store.groupOfKey(v.key)));
             this.listEl.append(sec);
           });
-        } else if (allTracked.length) {
-          for (const [id, label, color, items] of [
-            ["status:active", t("zotero-tabflow-sidebar-status-active", "已加载阅读器"), "#16a34a", allTracked.filter((x) => x.status === "active")],
-            ["status:sleeping", t("zotero-tabflow-sidebar-status-sleeping", "已休眠省内存"), "#d97706", allTracked.filter((x) => x.status === "sleeping")]
+        } else if (allTracked.length || matchingVirtuals.length) {
+          const deps = this.rowDeps();
+          for (const [id, label, color, items, vItems] of [
+            ["status:active", t("zotero-tabflow-sidebar-status-active", "已加载阅读器"), "#16a34a", allTracked.filter((x) => x.status === "active"), []],
+            ["status:sleeping", t("zotero-tabflow-sidebar-status-sleeping", "已休眠省内存"), "#d97706", allTracked.filter((x) => x.status === "sleeping"), []],
+            ["status:virtual", t("zotero-tabflow-sidebar-status-virtual", "虚拟保留成员"), "#64748b", [], matchingVirtuals]
           ]) {
-            const sec = buildSidebarSection(this.doc, this.collapsedSections, id, label, color, items.length);
+            const sec = buildSidebarSection(this.doc, this.collapsedSections, id, label, color, items.length + vItems.length);
             const body = sec.querySelector(".ztf-sb-group-body");
-            for (const item of items) body.append(buildSidebarTabRow(this.rowDeps(), item, selectedID));
+            for (const item of items) body.append(buildSidebarTabRow(deps, item, selectedID));
+            for (const v of vItems) body.append(buildSidebarVirtualRow(deps, v, this.store.groupOfKey(v.key)));
             this.listEl.append(sec);
           }
         }
       }
-      const noMatches = Boolean(q) && !allTracked.length && (!matchingVirtuals.length || this.viewMode !== "groups");
-      const noNonGroupRows = this.viewMode !== "groups" && !allTracked.length;
+      const noMatches = Boolean(q) && !allTracked.length && !matchingVirtuals.length;
+      const noNonGroupRows = this.viewMode !== "groups" && !allTracked.length && !matchingVirtuals.length;
       const brandNewEmpty = !q && this.viewMode === "groups" && !allTracked.length && !virtualList.length && !groups.some((g) => Boolean(g.id));
       if (noMatches || noNonGroupRows || brandNewEmpty) {
         this.clearGroupSections();
@@ -4517,11 +4729,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       const section = new GroupSection(
         this.win,
         this.doc,
-        {
-          section: "ztf-sb-group",
-          heading: "ztf-sb-group-head",
-          body: "ztf-sb-group-body"
-        },
+        { section: "ztf-sb-group", heading: "ztf-sb-group-head", body: "ztf-sb-group-body" },
         (closed) => this.store.setCollapsed(id, closed),
         (name) => this.store.renameGroup(id, name)
       );
@@ -4529,24 +4737,22 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       section.heading.dataset.ztfNavId = id;
       section.heading.prepend(this.h("span", "ztf-sb-dot"));
       section.heading.ondragover = (e) => {
-        if (this.draggedKey || hasZoteroDraggedItems(e.dataTransfer)) e.preventDefault();
+        const dt = e.dataTransfer;
+        if (this.draggedKey || hasTabFlowDraggedTab(dt) || hasZoteroDraggedItems(dt)) e.preventDefault();
       };
       section.heading.ondrop = (e) => {
         e.preventDefault();
-        if (this.draggedKey) {
-          this.store.assignKey(this.draggedKey, id);
+        const dt = e.dataTransfer;
+        const dropped = this.draggedKey || dt?.getData(TABFLOW_DRAG_MIME) || "";
+        if (dropped) {
+          this.store.assignKey(dropped, id);
           this.draggedKey = null;
           this.draggedTabId = null;
           this.onRefresh();
           return;
         }
-        const extIds = parseZoteroDraggedItemIDs(e.dataTransfer);
-        if (extIds.length) {
-          void (async () => {
-            for (const itemID of extIds) await this.actions.openVirtualOrItem(itemID, id);
-            this.onRefresh();
-          })();
-        }
+        const extIds = parseZoteroDraggedItemIDs(dt);
+        if (extIds.length) void Promise.all(extIds.map((itemID) => this.actions.openVirtualOrItem(itemID, id))).then(this.onRefresh);
       };
       this.groupSections.set(id, section);
       return section;
@@ -4558,7 +4764,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     dispose() {
       this.stopResize?.();
       this.clearGroupSections();
-      this.hoverCard.dispose();
+      if (this.ownsHoverCard) this.hoverCard.dispose();
       this.sidebar?.remove();
       this.sidebar = null;
       this.listEl = null;
@@ -4938,12 +5144,13 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       this.tabMenus = new TabContextMenuController(win, doc, store, this.meta, this.actions, refresh);
       this.itemMenus = new ItemContextMenuController(win, doc, store, this.actions, refresh);
       this.spotlight = new SpotlightController(win, doc, store, this.meta, this.actions, this.popovers, refresh);
-      this.horizontal = new HorizontalBarController(win, doc, store, this.meta, this.actions, this.tracker, this.tabMenus, this.popovers, this.spotlight, refresh);
+      this.hoverCard = new SidebarHoverCard(win, doc, store);
+      this.horizontal = new HorizontalBarController(win, doc, store, this.meta, this.actions, this.tracker, this.tabMenus, this.popovers, this.spotlight, refresh, this.hoverCard);
       this.sidebar = new VerticalSidebarController(win, doc, store, this.meta, this.actions, this.tabMenus, refresh, () => {
         if (!getPref("enableSessions")) return;
         const latest = this.store.state.sessions[0] || this.store.state.rollingSessions?.[0];
         if (latest) void this.popovers.previewAndRestoreSession(latest);
-      });
+      }, this.hoverCard);
     }
     styleEl = null;
     meta;
@@ -4955,6 +5162,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
     spotlight;
     horizontal;
     sidebar;
+    hoverCard;
     notifierID = null;
     observer = null;
     refreshTimer = null;
@@ -4978,6 +5186,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       style.textContent = WORKSPACE_CSS;
       doc.documentElement?.append(style);
       this.styleEl = style;
+      this.hoverCard.mount();
       this.spotlight.init();
       this.itemMenus.attach();
       this.notifierID = Zotero.Notifier.registerObserver(
@@ -5078,6 +5287,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       this.itemMenus.dispose();
       this.horizontal.dispose();
       this.sidebar.dispose();
+      this.hoverCard.dispose();
       this.styleEl?.remove();
     }
   };

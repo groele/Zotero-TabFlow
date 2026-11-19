@@ -151,3 +151,96 @@ export function formatSnapshotTimestamp(ts: number): string {
 	const mm = String(d.getMinutes()).padStart(2, '0');
 	return `${hh}:${mm}`;
 }
+
+export function buildGroupSessionSnapshot(
+	state: TabFlowState,
+	name: string,
+	groupId: string,
+	openKeys: readonly string[],
+): TabSessionSnapshot {
+	const targetGroup = groupId
+		? state.groups.find((g) => g.id === groupId)
+		: { id: `g-exp-${Date.now().toString(36)}`, name: state.ungroupedName || name.trim().slice(0, 60) || t('zotero-tabflow-saved-ungrouped-name', '未分组文献'), color: state.ungroupedColor || '#737373' };
+	const exportedId = targetGroup?.id || groupId;
+	const validIds = new Set(state.groups.map((g) => g.id));
+	const belongs = (key: string) => (groupId ? state.assignments[key] === groupId : !validIds.has(state.assignments[key] || ''));
+	const scopedOpen = [...new Set(openKeys)].filter(belongs);
+	const scopedVirtual = Object.values(state.virtualMembers)
+		.filter((m) => belongs(m.key))
+		.map(({ itemID, parentItemID, ...portable }) => portable);
+	const scopedKeys = new Set([...scopedOpen, ...scopedVirtual.map((m) => m.key)]);
+	for (const k of Object.keys(state.assignments)) if (belongs(k)) scopedKeys.add(k);
+	const assignments = Object.fromEntries([...scopedKeys].map((k) => [k, exportedId]));
+	const remarks: Record<string, TabRemark> = {};
+	for (const k of scopedKeys) if (state.remarks[k]) remarks[k] = { ...state.remarks[k] };
+	const now = Date.now();
+	return {
+		id: `s-${now}-${Math.random().toString(36).slice(2, 6)}`,
+		name: name.trim().slice(0, 60) || targetGroup?.name || t('zotero-tabflow-session-default-name', '工作区会话'),
+		createdAt: now,
+		groups: targetGroup ? [{ ...targetGroup, hidden: undefined }] : [],
+		assignments,
+		pinned: state.pinned.filter((k) => scopedKeys.has(k)),
+		openKeys: scopedOpen,
+		virtualMembers: scopedVirtual,
+		order: targetGroup ? [targetGroup.id] : [],
+		collapsed: [],
+		remarks,
+		kind: 'manual',
+	};
+}
+
+export function updateExistingSession(state: TabFlowState, id: string, openKeys: readonly string[]): TabSessionSnapshot | null {
+	const idx = state.sessions.findIndex((s) => s.id === id);
+	if (idx < 0) return null;
+	const current = state.sessions[idx];
+	const next = buildSessionSnapshot(state, current.name, openKeys, current.kind === 'template' ? 'template' : 'manual');
+	const updated: TabSessionSnapshot = { ...next, id: current.id, name: current.name };
+	state.sessions[idx] = updated;
+	return updated;
+}
+
+export function renameExistingSession(state: TabFlowState, id: string, name: string): boolean {
+	const clean = name.trim().slice(0, 60);
+	const target = clean ? state.sessions.find((s) => s.id === id) : null;
+	if (!target) return false;
+	target.name = clean;
+	return true;
+}
+
+export function pruneHistory(
+	state: TabFlowState,
+	openKeys: readonly string[],
+	maxOrphanEntries = 500,
+	maxAgeMs = 180 * 86_400_000,
+	now = Date.now(),
+): number {
+	const keep = new Set([
+		...openKeys,
+		...state.pinned,
+		...Object.keys(state.virtualMembers),
+		...Object.keys(state.assignments),
+		...Object.keys(state.remarks),
+	]);
+	const cutoff = now - maxAgeMs;
+	const orphans: Array<[string, number]> = [];
+	let removed = 0;
+	for (const [key, act] of Object.entries(state.history)) {
+		if (keep.has(key)) continue;
+		const ts = act?.lastViewed ?? act?.firstSeen ?? 0;
+		if (!ts || ts < cutoff) {
+			delete state.history[key];
+			removed++;
+		} else {
+			orphans.push([key, ts]);
+		}
+	}
+	if (orphans.length > maxOrphanEntries) {
+		orphans.sort((a, b) => b[1] - a[1]);
+		for (const [key] of orphans.slice(maxOrphanEntries)) {
+			delete state.history[key];
+			removed++;
+		}
+	}
+	return removed;
+}
