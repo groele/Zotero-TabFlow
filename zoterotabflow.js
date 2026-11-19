@@ -917,28 +917,39 @@
     try {
       const att = await resolveFileAttachment(item);
       if (!att) return false;
-      const filePath = await att.getFilePathAsync?.();
-      if (filePath && Zotero.File?.pathToFile && Zotero.launchFile) {
-        const folder = Zotero.File.pathToFile(filePath)?.parent?.path;
-        if (folder) {
-          const now = Date.now();
-          const prev = lastLaunched.get(folder) ?? 0;
-          if (now - prev < RECENT_LAUNCH_INTERVAL_MS) return true;
-          lastLaunched.set(folder, now);
+      const filePath = await att.getFilePathAsync?.() || att.getFilePath?.();
+      const nsFile = filePath ? Zotero.File?.pathToFile?.(filePath) : null;
+      const folder = nsFile?.parent?.path;
+      const cacheKey = filePath || folder || String(att.id || "");
+      if (cacheKey) {
+        const now = Date.now();
+        const prev = lastLaunched.get(cacheKey) ?? 0;
+        if (now - prev < RECENT_LAUNCH_INTERVAL_MS) return true;
+        lastLaunched.set(cacheKey, now);
+      }
+      try {
+        if (nsFile && nsFile.exists?.() !== false && typeof nsFile.reveal === "function") {
           try {
-            await Zotero.launchFile(folder);
+            await Promise.resolve(nsFile.reveal());
+            return true;
           } catch (error) {
-            lastLaunched.delete(folder);
-            throw error;
+            Zotero.logError(error instanceof Error ? error : new Error(String(error)));
           }
+        }
+        const targetWin = fallbackWin?.ZoteroPane ? fallbackWin : Zotero.getMainWindow?.();
+        if (targetWin?.ZoteroPane?.showAttachmentInFilesystem) {
+          await targetWin.ZoteroPane.showAttachmentInFilesystem(att.id);
           return true;
         }
+        if (folder && Zotero.launchFile) {
+          await Zotero.launchFile(folder);
+          return true;
+        }
+      } catch (error) {
+        if (cacheKey) lastLaunched.delete(cacheKey);
+        throw error;
       }
-      const targetWin = fallbackWin?.ZoteroPane ? fallbackWin : Zotero.getMainWindow?.();
-      if (targetWin?.ZoteroPane?.showAttachmentInFilesystem) {
-        await targetWin.ZoteroPane.showAttachmentInFilesystem(att.id);
-        return true;
-      }
+      if (cacheKey) lastLaunched.delete(cacheKey);
     } catch (error) {
       Zotero.logError(error instanceof Error ? error : new Error(String(error)));
     }

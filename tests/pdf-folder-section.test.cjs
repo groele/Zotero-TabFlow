@@ -55,3 +55,57 @@ test('PDF folder actions coalesce launches of the same parent directory', async 
 	await section.openAttachmentFolder({}, item, signal);
 	assert.deepEqual(launches, ['test-parent']);
 });
+
+test('openAttachmentFolder reveals and selects the PDF file via nsIFile.reveal and handles multiple files in one folder', async () => {
+	const { openAttachmentFolder, resetFolderLaunchCache } = require('../src/services/attachment-folder.ts');
+	resetFolderLaunchCache();
+	const revealed = [];
+	const launched = [];
+	globalThis.Zotero = {
+		File: {
+			pathToFile: (p) => ({
+				path: p,
+				parent: { path: 'shared-dir' },
+				exists: () => true,
+				reveal: () => { revealed.push(p); },
+			}),
+		},
+		launchFile: (path) => launched.push(path),
+		logError: (error) => assert.fail(error),
+	};
+	const itemA = { isFileAttachment: () => true, getFilePathAsync: async () => 'shared-dir/a.pdf' };
+	const itemB = { isFileAttachment: () => true, getFilePathAsync: async () => 'shared-dir/b.pdf' };
+	assert.equal(await openAttachmentFolder(itemA), true);
+	assert.equal(await openAttachmentFolder(itemA), true);
+	assert.equal(await openAttachmentFolder(itemB), true);
+	assert.deepEqual(revealed, ['shared-dir/a.pdf', 'shared-dir/b.pdf']);
+	assert.deepEqual(launched, []);
+});
+
+test('openAttachmentFolder falls back to ZoteroPane or parent folder when reveal throws or file is missing', async () => {
+	const { openAttachmentFolder, resetFolderLaunchCache } = require('../src/services/attachment-folder.ts');
+	resetFolderLaunchCache();
+	const paneCalls = [];
+	const launched = [];
+	globalThis.Zotero = {
+		File: {
+			pathToFile: (p) => ({
+				path: p,
+				parent: { path: 'fallback-dir' },
+				exists: () => false,
+				reveal: () => assert.fail('should not reveal non-existent file'),
+			}),
+		},
+		launchFile: (path) => launched.push(path),
+		logError: () => {},
+	};
+	const item = { id: 77, isFileAttachment: () => true, getFilePathAsync: async () => 'fallback-dir/missing.pdf' };
+	const win = { ZoteroPane: { showAttachmentInFilesystem: async (id) => { paneCalls.push(id); } } };
+	assert.equal(await openAttachmentFolder(item, win), true);
+	assert.deepEqual(paneCalls, [77]);
+	assert.deepEqual(launched, []);
+
+	resetFolderLaunchCache();
+	assert.equal(await openAttachmentFolder(item, {}), true);
+	assert.deepEqual(launched, ['fallback-dir']);
+});
