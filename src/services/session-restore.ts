@@ -1,4 +1,5 @@
 import type { TabFlowStore } from '../core/store.ts';
+import { isUsableSession } from '../core/session-validation.ts';
 import type { TabSessionSnapshot, TrackedTab, VirtualMemberMeta } from '../core/types.ts';
 
 export interface SessionRestoreItemRef {
@@ -81,7 +82,7 @@ export async function buildSessionRestorePlan(
 		return resolved.get(fullKey);
 	};
 
-	for (const fullKey of session.openKeys) {
+	for (const fullKey of new Set(session.openKeys)) {
 		if (openSet.has(fullKey)) {
 			alreadyOpenCount++;
 			continue;
@@ -158,20 +159,27 @@ export async function executeSessionRestorePlan(
 	openItem: (itemID: number) => Promise<void | boolean>,
 	openKeysNow: readonly string[],
 	isDisposed: () => boolean = () => false,
-): Promise<void> {
-	if (isDisposed()) return;
+): Promise<{ opened: number; failed: number }> {
+	const result = { opened: 0, failed: 0 };
+	if (isDisposed()) return result;
+	if (store.readOnly) throw new Error('TabFlow state is read-only');
+	const openKeys = new Set(openKeysNow);
 	if (!plan.merge && plan.session.kind !== 'pre-replace') {
 		store.savePreReplaceSnapshot([...openKeysNow]);
 	}
 	store.restoreSessionLayout(plan.session, plan.merge, plan.virtualMembers);
 	for (const ref of plan.toOpen) {
-		if (isDisposed() || !ref.itemID) return;
+		if (isDisposed()) break;
+		if (!ref.itemID || openKeys.has(ref.fullKey)) continue;
 		try {
-			await openItem(ref.itemID);
+			if (await openItem(ref.itemID) === false) result.failed++;
+			else result.opened++;
 		} catch (error) {
+			result.failed++;
 			Zotero.logError(error as Error);
 		}
 	}
+	return result;
 }
 
 export function buildPublicationGroupSuggestions(store: TabFlowStore, tracked: readonly TrackedTab[]): PublicationGroupSuggestion[] {
@@ -228,9 +236,10 @@ export async function parseAndPreviewSessionImport(
 	if (!parsed || parsed.format !== 'zotero-tabflow-session' || parsed.schemaVersion !== 1 || !Array.isArray(parsed.sessions)) {
 		throw new Error('Invalid TabFlow session archive format');
 	}
-	const sessions = parsed.sessions.filter(
-		(s): s is TabSessionSnapshot => Boolean(s && typeof (s as TabSessionSnapshot).name === 'string' && Array.isArray((s as TabSessionSnapshot).groups) && Array.isArray((s as TabSessionSnapshot).openKeys)),
-	);
+	if (!parsed.sessions.length || !parsed.sessions.every(isUsableSession)) {
+		throw new Error('Session archive is empty or contains an invalid session');
+	}
+	const sessions = parsed.sessions;
 	const checked = new Set<string>();
 	const missing: SessionRestoreItemRef[] = [];
 	let resolvableCount = 0;

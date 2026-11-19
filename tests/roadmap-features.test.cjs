@@ -52,7 +52,7 @@ test('a failed reader open preserves the virtual entry and a successful retry cl
 			isFileAttachment: () => true, fileExists: async () => fileExists,
 		}) };
 		Zotero.Reader.open = async (id) => { opened.push(id); };
-		const actions = new TabActionService({}, store, {});
+		const actions = new TabActionService({}, store, { getNativeTabs: () => [] });
 		await actions.openVirtualOrItem(42, group.id);
 		assert.deepEqual(opened, []);
 		assert.equal(store.state.virtualMembers['1:PDF'], virtual);
@@ -104,9 +104,10 @@ test('session round trip resolves hidden virtual members by key with new local I
 	const source = new TabFlowStore();
 	const group = source.ensureGroup('Archive');
 	source.assignKeys(['1:PDF', '1:MISSING'], group.id);
+	const metadata = { shortTitle: 'Paper', filename: '', source: '', creatorYear: '', collection: '', type: 'reader' };
 	source.setGroupHidden(group.id, true, [
-		{ key: '1:PDF', title: 'Paper', itemID: 12, parentItemID: 13 },
-		{ key: '1:MISSING', title: 'Missing paper', itemID: 14 },
+		{ ...metadata, key: '1:PDF', title: 'Paper', itemID: 12, parentItemID: 13 },
+		{ ...metadata, key: '1:MISSING', title: 'Missing paper', itemID: 14, parentItemID: null },
 	]);
 	const resolve = async (_library, key) => key === 'PDF' ? { id: 92, parentItemID: 93 } : null;
 	const snapshot = source.saveSession('Hidden archive', []);
@@ -327,7 +328,10 @@ test('TabActionService closes batches in one host call, protects pinned tabs, su
 			],
 			close(arg) { closedCalls.push(arg); },
 			undoClose() { undoCalls++; },
-			unload(id) { unloaded.push(id); },
+			unload(id) {
+				unloaded.push(id);
+				this._tabs.find((tab) => tab.id === id).type = 'reader-unloaded';
+			},
 		},
 	};
 	globalThis.Zotero.Items = {

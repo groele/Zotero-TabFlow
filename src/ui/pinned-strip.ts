@@ -105,7 +105,7 @@ function openOverflowMenu(
 	popup.addEventListener('popuphidden', (e: Event) => { if (e.target === popup) popup.remove(); });
 	for (const tab of overflow) {
 		const mi = xul('menuitem');
-		mi.setAttribute('label', `${tab.tab.id === selectedID ? '✓ ' : ''}${meta.getDisplayTitle(tab) === tab.title ? tab.title : tab.title}`);
+		mi.setAttribute('label', `${tab.tab.id === selectedID ? '✓ ' : ''}${meta.getDisplayTitle(tab)}`);
 		mi.addEventListener('command', () => actions.selectTab(tab.tab.id));
 		popup.append(mi);
 	}

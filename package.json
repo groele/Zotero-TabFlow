@@ -1,6 +1,6 @@
 {
   "name": "zotero-tabflow",
-  "version": "17.4.4",
+  "version": "17.4.6",
   "description": "Unified horizontal & vertical tab grouping, pinned tabs, tab sleep, remarks, sessions, collection auto-grouping, and Spotlight search for Zotero 10-12.",
   "private": true,
   "license": "AGPL-3.0-or-later",
@@ -18,7 +18,7 @@
     "guard": "node scripts/architecture-guard.mjs",
     "build:xpi": "pwsh -NoProfile -File scripts/build.ps1",
     "build": "npm run build:bundle && npm run guard && npm run build:xpi",
-    "test:syntax": "node --check bootstrap.js zoterotabflow.js zoterotabflow_prefs.js",
+    "test:syntax": "node --check bootstrap.js && node --check zoterotabflow.js && node --check zoterotabflow_prefs.js",
     "test:unit": "node --test-concurrency=1 --experimental-strip-types --test tests/*.test.cjs",
     "test": "npm run build:bundle && npm run guard && npm run test:syntax && npm run test:unit"
   },

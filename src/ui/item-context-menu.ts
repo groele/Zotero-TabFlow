@@ -70,7 +70,7 @@ export class ItemContextMenuController {
 				this.onRefresh();
 			})();
 		});
-		const groups = this.store.state.groups;
+		const groups = this.store.visibleGroups().filter((group) => group.id);
 		if (groups.length) this.itemSubPopup.append(this.xul('menuseparator'));
 		for (const g of groups) {
 			this.item(this.itemSubPopup, g.name, () => {

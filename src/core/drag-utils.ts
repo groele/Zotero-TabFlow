@@ -6,10 +6,9 @@ export function computeNativeTabMoveTarget(
 ): number {
 	const from = tabIds.indexOf(draggedId);
 	const to = tabIds.indexOf(targetId);
-	if (from < 0 || to < 0 || from === to) return -1;
-	let targetIdx = after ? to + 1 : to;
-	if (from < targetIdx) targetIdx -= 1;
-	return Math.max(0, Math.min(tabIds.length - 1, targetIdx));
+	if (from < 1 || to < 0 || from === to) return -1;
+	// Zotero.move takes a boundary in the original list and adjusts it after removal.
+	return Math.max(1, to + (after ? 1 : 0));
 }
 
 export function parseZoteroDraggedItemIDs(dt: { getData?: (type: string) => string } | null | undefined): number[] {

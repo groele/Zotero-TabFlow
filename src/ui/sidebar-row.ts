@@ -82,15 +82,16 @@ export function buildSidebarTabRow(deps: SidebarRowDeps, item: TrackedTab, selec
 		e.stopPropagation();
 		void deps.actions.showInFilesystem(item.tab.id);
 	};
-	row.append(folderBtn);
+	if (item.itemID && item.tab.type.startsWith('reader')) row.append(folderBtn);
 	deps.selection?.addCheckbox(row, item);
 	row.onclick = () => deps.actions.selectTab(item.tab.id);
 	row.oncontextmenu = (e: Event) => deps.menus.openTabMenu(e as MouseEvent, item);
 	row.onmouseenter = () => deps.hoverCard.show(row, item);
 	row.onmouseleave = () => deps.hoverCard.hide();
-	row.ondragstart = () => {
+	row.ondragstart = (event: Event) => {
 		deps.setDraggedKey(item.key);
 		deps.setDraggedTabId(item.tab.id);
+		(event as DragEvent).dataTransfer?.setData('text/plain', item.key);
 	};
 	row.ondragover = (e: Event) => {
 		const dragged = deps.getDraggedKey();

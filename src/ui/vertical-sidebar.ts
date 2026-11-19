@@ -184,6 +184,7 @@ export class VerticalSidebarController {
 
 	private renderList(snapshot?: readonly TrackedTab[]): void {
 		if (!this.listEl) return;
+		this.hoverCard.hide();
 		const focusAnchor = captureSidebarFocusAnchor(this.doc, this.sidebar);
 		const q = (this.searchInput?.value || '').trim().toLowerCase();
 		const selectedID = this.meta.getSelectedTabID();
@@ -214,16 +215,18 @@ export class VerticalSidebarController {
 			const renderedGroups = groups.filter((g) => {
 				const hasOpenMembers = tabsByGroup.has(g.id);
 				const hasVirtualMembers = virtualsByGroup.has(g.id);
-				return shouldRenderGroupHeading(g.id, hasOpenMembers, hasVirtualMembers, Boolean(!g.id && this.store.state.ungroupedName));
+				const hasCustomHeading = !this.store.state.ungroupedHeadingHidden && Boolean(this.store.state.ungroupedName);
+				return shouldRenderGroupHeading(g.id, hasOpenMembers, hasVirtualMembers, hasCustomHeading);
 			});
 			renderedGroupsCount = renderedGroups.length;
 			for (const g of renderedGroups) {
 				const members = tabsByGroup.get(g.id) ?? [];
 				const virtuals = virtualsByGroup.get(g.id) ?? [];
-				const collapsed = collapsedIds.has(g.id);
+				const showHeading = Boolean(g.id) || !this.store.state.ungroupedHeadingHidden;
+				const collapsed = showHeading && collapsedIds.has(g.id);
 				const section = this.getGroupSection(g.id);
 				section.element.style.setProperty('--ztf-group-dot', g.color);
-				section.update(g, collapsed, members.length + virtuals.length);
+				section.update(g, collapsed, members.length + virtuals.length, showHeading);
 				section.heading.oncontextmenu = (e: Event) => this.menus.openGroupMenu(e as MouseEvent, g);
 				if (!collapsed) {
 					const body = this.doc.createDocumentFragment();

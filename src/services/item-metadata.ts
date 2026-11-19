@@ -118,7 +118,7 @@ export class ItemMetadataService {
 					collection,
 					groupId: groupIds.has(assignments[key]) ? assignments[key] : '',
 					pinned: pinnedKeys.has(key),
-					status: sleepingKeys.has(key) && !hostLoaded ? 'sleeping' : 'active',
+					status: tab.type.endsWith('-unloaded') || (sleepingKeys.has(key) && !hostLoaded) ? 'sleeping' : 'active',
 				};
 			});
 	}

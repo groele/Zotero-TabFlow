@@ -65,9 +65,23 @@
   };
   function getPref(key) {
     const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
-    if (raw === void 0 || raw === null) return DEFAULT_PREFS[key];
+    const fallback = DEFAULT_PREFS[key];
+    if (typeof raw !== typeof fallback) return fallback;
+    const range = NUMERIC_RANGES[key];
+    if (range && typeof raw === "number") {
+      if (!Number.isFinite(raw)) return fallback;
+      return Math.max(range[0], Math.min(range[1], Math.trunc(raw)));
+    }
     return raw;
   }
+  var NUMERIC_RANGES = {
+    verticalSidebarWidth: [200, 440],
+    verticalTabRowHeight: [32, 80],
+    verticalTabFontSize: [10, 22],
+    autoSleepMinutes: [0, 1440],
+    activeReaderBudget: [0, 100],
+    staleSuggestDays: [1, 3650]
+  };
   function resetAllPrefs() {
     for (const [key, value] of Object.entries(DEFAULT_PREFS)) {
       Zotero.Prefs.set(PREF_PREFIX + key, value, true);

@@ -83,9 +83,24 @@ export const DEFAULT_PREFS: TabFlowPrefs = {
 
 export function getPref<K extends keyof TabFlowPrefs>(key: K): TabFlowPrefs[K] {
 	const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
-	if (raw === undefined || raw === null) return DEFAULT_PREFS[key];
+	const fallback = DEFAULT_PREFS[key];
+	if (typeof raw !== typeof fallback) return fallback;
+	const range = NUMERIC_RANGES[key];
+	if (range && typeof raw === 'number') {
+		if (!Number.isFinite(raw)) return fallback;
+		return Math.max(range[0], Math.min(range[1], Math.trunc(raw))) as TabFlowPrefs[K];
+	}
 	return raw as TabFlowPrefs[K];
 }
+
+const NUMERIC_RANGES: Partial<Record<keyof TabFlowPrefs, [number, number]>> = {
+	verticalSidebarWidth: [200, 440],
+	verticalTabRowHeight: [32, 80],
+	verticalTabFontSize: [10, 22],
+	autoSleepMinutes: [0, 1440],
+	activeReaderBudget: [0, 100],
+	staleSuggestDays: [1, 3650],
+};
 
 export function setPref<K extends keyof TabFlowPrefs>(key: K, value: TabFlowPrefs[K]): void {
 	Zotero.Prefs.set(PREF_PREFIX + key, value, true);

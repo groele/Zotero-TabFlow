@@ -7,7 +7,9 @@ import {
 	applySessionLayout,
 	buildSessionSnapshot,
 	formatSnapshotTimestamp,
+	MAX_MANUAL_SESSIONS,
 } from './session-store.ts';
+import { createEmptyState } from './types.ts';
 import type {
 	TabDisplayMode,
 	TabFlowState,
@@ -19,25 +21,6 @@ import type {
 
 const STATE_PREF = `${PREF_PREFIX}state`;
 const AUTO_COLORS = ['#3977d5', '#8b5ac7', '#21866a', '#dc8225', '#c74646', '#298c9b', '#d064a3'];
-
-export function createEmptyState(): TabFlowState {
-	return {
-		version: 1,
-		groups: [],
-		assignments: {},
-		ungroupedColor: '#737373',
-		collapsed: [],
-		order: [''],
-		history: {},
-		remarks: {},
-		groupDisplay: {},
-		pinned: [],
-		sleeping: [],
-		virtualMembers: {},
-		sessions: [],
-		rollingSessions: [],
-	};
-}
 
 export class TabFlowStore {
 	state: TabFlowState = createEmptyState();
@@ -55,8 +38,13 @@ export class TabFlowStore {
 
 	load(): void {
 		const raw = Zotero.Prefs.get(STATE_PREF, true);
-		if (!raw || typeof raw !== 'string') return;
+		if (raw === '' || raw == null) {
+			this.state = createEmptyState();
+			this.readOnly = false;
+			return;
+		}
 		try {
+			if (typeof raw !== 'string') throw new Error('Invalid Zotero TabFlow preference type');
 			const parsed = JSON.parse(raw) as Partial<TabFlowState>;
 			if (parsed.version !== 1 || !Array.isArray(parsed.groups)) {
 				throw new Error('Invalid Zotero TabFlow state');
@@ -69,6 +57,7 @@ export class TabFlowStore {
 				version: 1,
 				groups,
 				assignments: { ...(parsed.assignments ?? {}) },
+				ungroupedHeadingHidden: parsed.ungroupedHeadingHidden === true,
 				ungroupedColor: normalizeHexColor(parsed.ungroupedColor ?? '') ?? '#737373',
 				ungroupedName: typeof parsed.ungroupedName === 'string' && parsed.ungroupedName.trim() ? parsed.ungroupedName.trim().slice(0, 60) : undefined,
 				collapsed: [...new Set((parsed.collapsed ?? []).filter((id) => validIds.has(id)))],
@@ -179,13 +168,21 @@ export class TabFlowStore {
 	}
 
 	dissolveGroup(id: string): boolean {
-		if (!id || this.readOnly || !this.state.groups.some((group) => group.id === id)) return false;
+		if (!id) return this.setUngroupedHeadingHidden(true);
+		if (this.readOnly || !this.state.groups.some((group) => group.id === id)) return false;
 		this.state.groups = this.state.groups.filter((group) => group.id !== id);
 		this.state.assignments = Object.fromEntries(Object.entries(this.state.assignments).filter(([, groupId]) => groupId !== id));
 		this.state.order = this.state.order.filter((x) => x !== id);
 		this.state.collapsed = this.state.collapsed.filter((x) => x !== id);
 		delete this.state.groupDisplay[id];
 		this.save();
+		return true;
+	}
+
+	setUngroupedHeadingHidden(hidden: boolean): boolean {
+		if (this.readOnly || Boolean(this.state.ungroupedHeadingHidden) === hidden) return false;
+		this.state.ungroupedHeadingHidden = hidden;
+		this.setCollapsed('', false);
 		return true;
 	}
 
@@ -319,7 +316,7 @@ export class TabFlowStore {
 	}
 
 	saveRollingSnapshot(openKeys: string[]): TabSessionSnapshot | null {
-		if (!getPref('enableRollingSnapshots')) return null;
+		if (this.readOnly || !getPref('enableSessions') || !getPref('enableRollingSnapshots')) return null;
 		const stamp = formatSnapshotTimestamp(Date.now());
 		const label = `${t('zotero-tabflow-rolling-prefix', '自动快照')} · ${stamp}`;
 		const snapshot = buildSessionSnapshot(this.state, label, openKeys, 'rolling');
@@ -329,8 +326,10 @@ export class TabFlowStore {
 	}
 
 	importSessions(snapshots: readonly TabSessionSnapshot[]): number {
+		if (this.readOnly) return 0;
 		let count = 0;
-		for (const snap of [...snapshots].reverse()) {
+		const available = Math.max(0, MAX_MANUAL_SESSIONS - this.state.sessions.length);
+		for (const snap of snapshots.slice(0, available).reverse()) {
 			if (!snap || typeof snap.name !== 'string' || !Array.isArray(snap.groups)) continue;
 			const copy: TabSessionSnapshot = {
 				...snap,

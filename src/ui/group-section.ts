@@ -73,7 +73,10 @@ export class GroupSection {
 		this.heading.addEventListener('contextmenu', () => this.resetClick());
 	}
 
-	update(group: TabGroup, collapsed: boolean, count: number): void {
+	update(group: TabGroup, collapsed: boolean, count: number, showHeading = true): void {
+		if (!showHeading) this.pause();
+		if (!this.cancelEdit) this.heading.hidden = !showHeading;
+		this.element.toggleAttribute('data-ztf-loose-tabs', !showHeading);
 		this.name = group.name;
 		this.collapsed = collapsed;
 		const label = `${collapsed ? '▸' : '▾'} ${group.name} (${count})`;

@@ -143,7 +143,8 @@ export class HorizontalBarController {
 		const groups = rawGroups.filter((g) => {
 			const hasMembers = unpinned.has(g.id);
 			const hasVirtuals = virtualsByGroup.has(g.id);
-			return shouldRenderGroupHeading(g.id, hasMembers, hasVirtuals, Boolean(!g.id && this.store.state.ungroupedName));
+			const hasCustomHeading = !this.store.state.ungroupedHeadingHidden && Boolean(this.store.state.ungroupedName);
+			return shouldRenderGroupHeading(g.id, hasMembers, hasVirtuals, hasCustomHeading);
 		});
 		for (const g of groups) {
 			let section = this.groupSections.get(g.id);
@@ -158,11 +159,12 @@ export class HorizontalBarController {
 				this.groupSections.set(g.id, section);
 			}
 			section.element.style.setProperty('--ztf-color', g.color);
-			const collapsed = collapsedIds.has(g.id);
+			const showHeading = Boolean(g.id) || !this.store.state.ungroupedHeadingHidden;
+			const collapsed = showHeading && collapsedIds.has(g.id);
 			const members = unpinned.get(g.id) ?? [];
 			const virtuals = virtualsByGroup.get(g.id) ?? [];
 
-			section.update(g, collapsed, members.length + virtuals.length);
+			section.update(g, collapsed, members.length + virtuals.length, showHeading);
 			section.heading.oncontextmenu = (e: Event) => this.menus.openGroupMenu(e as MouseEvent, g);
 			this.drag.bindGroupDrag(section.heading, g.id, collapsed);
 

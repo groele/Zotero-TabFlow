@@ -66,6 +66,7 @@ export class HorizontalDragController {
 			e.stopPropagation();
 			this.draggedGroupId = groupId;
 			this.draggedKey = null;
+			(e as DragEvent).dataTransfer?.setData('application/x-zotero-tabflow-group', groupId || 'ungrouped');
 		};
 		heading.ondragover = (e: Event) => {
 			const extItems = parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer);

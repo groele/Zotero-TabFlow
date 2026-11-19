@@ -135,10 +135,12 @@ function createFakeElement(tag, state) {
 	return el;
 }
 
-test('computeNativeTabMoveTarget and parseZoteroDraggedItemIDs handle index 0, forward/backward moves, and Zotero payloads', () => {
-	assert.equal(computeNativeTabMoveTarget(['a', 'b', 'c'], 'c', 'a', false), 0);
-	assert.equal(computeNativeTabMoveTarget(['a', 'b', 'c'], 'a', 'b', true), 1);
-	assert.equal(computeNativeTabMoveTarget(['a', 'b', 'c'], 'a', 'c', true), 2);
+test('computeNativeTabMoveTarget uses native insertion boundaries and protects the library tab', () => {
+	const ids = ['library', 'a', 'b', 'c'];
+	assert.equal(computeNativeTabMoveTarget(ids, 'c', 'a', false), 1);
+	assert.equal(computeNativeTabMoveTarget(ids, 'a', 'b', true), 3);
+	assert.equal(computeNativeTabMoveTarget(ids, 'a', 'c', true), 4);
+	assert.equal(computeNativeTabMoveTarget(ids, 'library', 'b', true), -1);
 	assert.equal(computeNativeTabMoveTarget(['a', 'b'], 'a', 'a', false), -1);
 
 	assert.deepEqual(parseZoteroDraggedItemIDs({ getData: () => '12, 45, 12' }), [12, 45]);
@@ -159,6 +161,7 @@ test('isTabBusyOrProtected and TabActionService protect playing media, unsaved r
 		Zotero_Tabs: {
 			selectedID: 't-cur',
 			_tabs: [
+				{ id: 'zotero-pane', type: 'library' },
 				{ id: 't-media', type: 'reader', title: 'Video', data: { itemID: 1, soundPlaying: true } },
 				{ id: 't-idle', type: 'reader', title: 'Paper', data: { itemID: 2 } },
 			],
@@ -180,7 +183,7 @@ test('isTabBusyOrProtected and TabActionService protect playing media, unsaved r
 	assert.equal(count, 1);
 	assert.deepEqual(closed, ['t-idle']);
 	assert.equal(actions.moveTabRelative('t-idle', 't-media', false), true);
-	assert.deepEqual(moved, [['t-idle', 0]]);
+	assert.deepEqual(moved, [['t-idle', 1]]);
 });
 
 test('bindSidebarKeyboardNavigation navigates DOM nodes, toggles groups, isolates IME/child controls, and converts collections', () => {

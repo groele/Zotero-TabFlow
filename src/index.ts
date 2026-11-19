@@ -32,7 +32,7 @@ class WindowWorkspace {
 	private ageTickCount = 0;
 
 	private saveRollingIfNeeded(): void {
-		if (!getPref('enableRollingSnapshots')) return;
+		if (!getPref('enableSessions') || !getPref('enableRollingSnapshots')) return;
 		const keys = this.meta.buildTrackedTabs().map((t) => t.key);
 		if (keys.length || this.store.state.groups.length) {
 			this.store.saveRollingSnapshot(keys);
@@ -54,6 +54,7 @@ class WindowWorkspace {
 		this.spotlight = new SpotlightController(win, doc, store, this.meta, this.actions, this.popovers, refresh);
 		this.horizontal = new HorizontalBarController(win, doc, store, this.meta, this.actions, this.tracker, this.tabMenus, this.popovers, this.spotlight, refresh);
 		this.sidebar = new VerticalSidebarController(win, doc, store, this.meta, this.actions, this.tabMenus, refresh, () => {
+			if (!getPref('enableSessions')) return;
 			const latest = this.store.state.sessions[0] || this.store.state.rollingSessions?.[0];
 			if (latest) void this.popovers.previewAndRestoreSession(latest);
 		});
@@ -196,6 +197,7 @@ class TabFlowPlugin {
 
 	start(): void {
 		this.store.load();
+		if (getPref('debug')) Zotero.debug('[TabFlow] Workspace state loaded');
 		this.pdfFolderSection.register(this.id, this.rootURI);
 		this.unsubscribeStore = this.store.subscribe(() => this.refreshAll());
 		this.prefObserverIDs = Object.keys(DEFAULT_PREFS).map((key) =>
@@ -206,6 +208,7 @@ class TabFlowPlugin {
 
 	reloadState(): void {
 		this.store.load();
+		if (getPref('debug')) Zotero.debug('[TabFlow] Workspace state reloaded');
 		this.refreshAll();
 	}
 
@@ -228,6 +231,7 @@ class TabFlowPlugin {
 	}
 
 	shutdown(): void {
+		if (getPref('debug')) Zotero.debug('[TabFlow] Shutting down');
 		this.pdfFolderSection.unregister();
 		for (const id of this.prefObserverIDs) Zotero.Prefs.unregisterObserver(id);
 		this.prefObserverIDs = [];

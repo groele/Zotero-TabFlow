@@ -158,13 +158,19 @@ export class PopoverController {
 		this.restoring = true;
 		try {
 			const openKeys = this.meta.buildTrackedTabs().map((item) => item.key);
-			await executeSessionRestorePlan(
+			const result = await executeSessionRestorePlan(
 				plan,
 				this.store,
 				(itemID) => this.actions.openVirtualOrItem(itemID, undefined, true),
 				openKeys,
 				() => this.disposed,
 			);
+			if (!this.disposed && (result.failed || plan.missing.length)) {
+				const missing = plan.missing.length;
+				Services.prompt.alert(this.win, 'Zotero TabFlow', t('zotero-tabflow-session-restore-partial',
+					`工作区已应用。已打开 ${result.opened} 项，打开失败 ${result.failed} 项，未找到 ${missing} 项。`,
+					{ ...result, missing }));
+			}
 		} catch (error) {
 			Zotero.logError(error as Error);
 			Services.prompt.alert(this.win, 'Zotero TabFlow', t('zotero-tabflow-session-restore-error', '恢复会话失败，请查看 Zotero 错误控制台。'));
@@ -193,11 +199,12 @@ export class PopoverController {
 			fp.appendFilter('JSON', '*.json');
 			fp.defaultString = 'zotero-tabflow-sessions.json';
 			const res = await new Promise<number>((resolve) => fp.open(resolve));
-			if (res !== Ci.nsIFilePicker.returnOK && res !== Ci.nsIFilePicker.returnReplace) return;
+			if (this.disposed || (res !== Ci.nsIFilePicker.returnOK && res !== Ci.nsIFilePicker.returnReplace)) return;
 			const version = (Zotero as any).zoterotabflow?.version;
 			await Zotero.File.putContentsAsync(fp.file, exportSessionsJson(this.store.state.sessions, version), 'utf-8');
 		} catch (error) {
 			Zotero.logError(error as Error);
+			if (!this.disposed) Services.prompt.alert(this.win, 'Zotero TabFlow', t('zotero-tabflow-export-error', '无法写入会话文件。请检查保存位置和文件权限。'));
 		}
 	}
 
@@ -212,7 +219,12 @@ export class PopoverController {
 			const preview = await parseAndPreviewSessionImport(text);
 			if (!preview.sessions.length || this.disposed) return;
 			this.preview.openImportPreview(preview, () => {
-				this.store.importSessions(preview.sessions);
+				const imported = this.store.importSessions(preview.sessions);
+				if (imported < preview.sessions.length) {
+					const skipped = preview.sessions.length - imported;
+					Services.prompt.alert(this.win, 'Zotero TabFlow', t('zotero-tabflow-import-partial',
+						`已导入 ${imported} 个会话，未导入 ${skipped} 个。请检查可用会话容量及工作区是否可写。`, { imported, skipped }));
+				}
 				this.onRefresh();
 			});
 		} catch (error) {

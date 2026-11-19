@@ -24,9 +24,9 @@ export class SidebarHoverCard {
 	show(anchor: HTMLElement, tab: TrackedTab): void {
 		if (!getPref('enableHoverPreview') || !this.card) return;
 		const h = this.store.state.history[tab.key];
-		const last = h?.lastViewed || h?.firstSeen;
+		const last = h?.lastViewed;
 		const days = last ? Math.max(0, Math.floor((Date.now() - last) / 86_400_000)) : 0;
-		const remark = this.store.getRemark(tab.key).note;
+		const remark = getPref('enableTabRemarks') ? this.store.getRemark(tab.key).note : '';
 
 		const reader = (Zotero.Reader as any)?.getByTabID?.(tab.tab.id);
 		const pageIdx = reader?.state?.pageIndex;
@@ -48,9 +48,9 @@ export class SidebarHoverCard {
 			d.textContent = text;
 			return d;
 		};
-		const lastText = days === 0
-			? t('zotero-tabflow-hover-today', '今天')
-			: t('zotero-tabflow-hover-days-ago', `${days} 天前`, { days });
+		const lastText = !last ? t('zotero-tabflow-hover-never-viewed', '尚未查看')
+			: days === 0 ? t('zotero-tabflow-hover-today', '今天')
+				: t('zotero-tabflow-hover-days-ago', `${days} 天前`, { days });
 		this.card.append(
 			mk('ztf-hc-title', tab.title),
 			mk('ztf-hc-meta', [tab.creatorYear, tab.source].filter(Boolean).join(' · ') || t('zotero-tabflow-hover-no-meta', '暂无作者/期刊元数据')),
@@ -60,8 +60,8 @@ export class SidebarHoverCard {
 		if (remark) this.card.append(mk('ztf-hc-note', t('zotero-tabflow-hover-remark', `备注：${remark}`, { note: remark })));
 
 		const rect = anchor.getBoundingClientRect();
-		this.card.style.left = `${Math.min(rect.right + 8, this.win.innerWidth - 332)}px`;
-		this.card.style.top = `${Math.min(rect.top, this.win.innerHeight - 165)}px`;
+		this.card.style.left = `${Math.max(0, Math.min(rect.right + 8, this.win.innerWidth - 332))}px`;
+		this.card.style.top = `${Math.max(0, Math.min(rect.top, this.win.innerHeight - 165))}px`;
 		this.card.hidden = false;
 	}
 

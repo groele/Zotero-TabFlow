@@ -7,7 +7,7 @@ import type {
 	VirtualMemberMeta,
 } from './types.ts';
 
-const MAX_MANUAL_SESSIONS = 30;
+export const MAX_MANUAL_SESSIONS = 30;
 const MAX_ROLLING_SNAPSHOTS = 3;
 
 export function buildSessionSnapshot(
@@ -43,6 +43,7 @@ export function buildSessionSnapshot(
 		remarks,
 		ungroupedName: state.ungroupedName,
 		ungroupedColor: state.ungroupedColor,
+		ungroupedHeadingHidden: state.ungroupedHeadingHidden,
 		kind,
 	};
 }
@@ -55,8 +56,11 @@ export function sessionLayoutFingerprint(snap: TabSessionSnapshot): string {
 		openKeys: snap.openKeys,
 		virtualMembers: snap.virtualMembers,
 		order: snap.order,
+		collapsed: snap.collapsed,
+		remarks: snap.remarks,
 		ungroupedName: snap.ungroupedName,
 		ungroupedColor: snap.ungroupedColor,
+		ungroupedHeadingHidden: snap.ungroupedHeadingHidden,
 	});
 }
 
@@ -113,6 +117,7 @@ export function applySessionLayout(
 		state.collapsed = (snapshot.collapsed ?? []).filter((id) => validIds.has(id));
 		state.ungroupedName = snapshot.ungroupedName;
 		state.ungroupedColor = snapshot.ungroupedColor ?? '#737373';
+		state.ungroupedHeadingHidden = snapshot.ungroupedHeadingHidden === true;
 	}
 
 	if (!merge) state.assignments = {};
@@ -128,7 +133,7 @@ export function applySessionLayout(
 		}
 	}
 	state.pinned = [...new Set([...(merge ? state.pinned : []), ...snapshot.pinned])];
-	if (!merge) {
+	if (!merge && snapshot.kind !== 'template') {
 		state.virtualMembers = Object.fromEntries(Object.entries(state.virtualMembers).filter(([key]) =>
 			virtualMembers === undefined && (previousAssignments[key] || '') === (state.assignments[key] || ''),
 		));

@@ -175,19 +175,22 @@ export class SpotlightController {
 			.filter((tab) => !hiddenIds.has(tab.groupId) && tabMatches(tab))
 			.map((tab) => {
 				const gName = names.get(tab.groupId) || t('zotero-tabflow-ungrouped', '未分组');
-				const r = this.store.getRemark(tab.key).note;
+				const r = getPref('enableTabRemarks') ? this.store.getRemark(tab.key).note : '';
 				return { label: `${tab.pinned ? '📌 ' : ''}${r || tab.title}`, hint: `${gName} · ${tab.collection}`, run: () => this.actions.selectTab(tab.tab.id) };
 			});
 
 		const openKeys = new Set(tabs.map((tab) => tab.key));
 		const openItemIds = new Set(tabs.flatMap((tab) => [tab.itemID, tab.parentItemID]));
-		const libraryEntries: SpotEntry[] = (!libMode && (q.startsWith('>') || q.length < 2 || tabEntries.length >= 8)) || !terms.length ? [] : this.libraryCache
+		const libraryEntries: SpotEntry[] = !libMode || !terms.length ? [] : this.libraryCache
 			.filter((it) => !openKeys.has(it.fullKey) && !openItemIds.has(it.id) && matches(it.searchText))
 			.slice(0, 6)
 			.map((it) => ({
 				label: `📖 ${it.title}`,
 				hint: it.metaHint || t('zotero-tabflow-spot-hint-library', '文献库 · 打开'),
-				run: () => void this.actions.openVirtualOrItem(it.id).then(this.onRefresh),
+				run: () => void this.actions.openVirtualOrItem(it.id).then(async (opened) => {
+					if (!opened) await (this.win as any).ZoteroPane?.selectItem?.(it.id);
+					this.onRefresh();
+				}).catch((error) => Zotero.logError(error)),
 			}));
 
 		const selectedID = this.meta.getSelectedTabID();
@@ -242,8 +245,12 @@ export class SpotlightController {
 			{ label: `↩ ${t('zotero-tabflow-menu-undo-close', '恢复最近关闭的标签页')}`, hint: 'Ctrl+Shift+T', run: () => { this.actions.undoCloseTab(); this.onRefresh(); } },
 			{ label: `📂 ${t('zotero-tabflow-spot-cmd-autogroup', '按 Zotero 集合自动分组')}`, hint: t('zotero-tabflow-spot-hint-autogroup', '自动归组'), run: () => { this.actions.autoGroupByCollection(); this.onRefresh(); } },
 			{ label: `🗂️ ${t('zotero-tabflow-menu-suggest-venue', '按期刊自动归组建议…')}`, hint: t('zotero-tabflow-spot-hint-suggest', '归组建议'), run: () => this.win.setTimeout(() => this.popovers.openPublicationSuggest(), 0) },
-			{ label: `💤 ${t('zotero-tabflow-spot-cmd-sleep', '休眠所有后台非固定标签')}`, hint: t('zotero-tabflow-spot-hint-sleep', '释放内存'), run: () => { this.actions.sleepInactiveTabs(); this.onRefresh(); } },
-			...(getPref('enableSessions') ? [{
+			...(getPref('enableTabSleep') ? [{
+				label: `💤 ${t('zotero-tabflow-spot-cmd-sleep', '休眠所有后台非固定标签')}`,
+				hint: t('zotero-tabflow-spot-hint-sleep', '释放内存'),
+				run: () => { this.actions.sleepInactiveTabs(); this.onRefresh(); },
+			}] : []),
+			...(getPref('enableSessions') && !this.store.readOnly ? [{
 				label: `💾 ${t('zotero-tabflow-spot-cmd-save-session', '保存当前工作区为会话…')}`,
 				hint: t('zotero-tabflow-spot-hint-session', '会话'),
 				run: () => this.win.setTimeout(() => {
@@ -264,11 +271,11 @@ export class SpotlightController {
 					hint: t('zotero-tabflow-spot-hint-pin', '固定'),
 					run: () => { this.store.togglePinned(activeTab.key); this.onRefresh(); },
 				}] : []),
-				{
+				...(activeTab.itemID && activeTab.tab.type?.startsWith('reader') && getPref('enableShowInFilesystem') ? [{
 					label: `📂 ${t('zotero-tabflow-spot-cmd-pdf-folder', '打开当前 PDF 附件所在文件夹')}`,
 					hint: t('zotero-tabflow-spot-hint-folder', '文件夹'),
 					run: () => void this.actions.showInFilesystem(activeTab.tab.id),
-				},
+				}] : []),
 			] : []),
 		].filter((c) => !terms.length || terms.every((term) => `${c.label} ${c.hint}`.toLowerCase().includes(term)));
 

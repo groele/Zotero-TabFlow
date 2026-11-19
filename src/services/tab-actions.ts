@@ -15,7 +15,8 @@ export function isTabBusyOrProtected(
 	if (options.protectPinned && isPinned) return true;
 	if (options.protectSelected && tab.id === selectedID) return true;
 	if (options.protectMedia) {
-		if ((tab.data as any)?.soundPlaying || reader?.soundPlaying || reader?._internalReader?.hasUnsavedChanges) {
+		if ((tab.audioStatus?.active && !tab.audioStatus.paused) || tab.data?.soundPlaying
+			|| reader?.soundPlaying || reader?._internalReader?.hasUnsavedChanges) {
 			return true;
 		}
 	}
@@ -46,13 +47,14 @@ export class TabActionService {
 		const key = this.meta.tabKey(tab);
 		if (key && this.store.isSleeping(key)) this.store.setSleeping(key, false);
 		if (tab) {
-			this.store.setCollapsed(this.store.groupOfKey(key), false);
-			tabs.select(tabId);
+			const groupId = this.store.groupOfKey(key);
+			if (this.store.state.collapsed.includes(groupId)) this.store.setCollapsed(groupId, false);
+			void Promise.resolve(tabs.select(tabId)).catch((error) => Zotero.logError(error as Error));
 		}
 	}
 
 	async closeTab(tabId: string, preserveVirtual = true): Promise<void> {
-		await this.closeTabs([tabId], { preserveVirtual });
+		await this.closeTabs([tabId], { preserveVirtual, protectPinned: true, protectMedia: true });
 	}
 
 	async closeTabs(tabIds: readonly string[], options: TabCloseOptions = {}): Promise<number> {
@@ -64,6 +66,7 @@ export class TabActionService {
 		const trackedMap = new Map(this.meta.buildTrackedTabs().map((t) => [t.tab.id, t]));
 
 		const toClose: string[] = [];
+		const backups: VirtualMemberMeta[] = [];
 		for (const id of new Set(tabIds)) {
 			const tab = nativeMap.get(id);
 			if (!tab || tab.type === 'library') continue;
@@ -72,12 +75,21 @@ export class TabActionService {
 			if (isTabBusyOrProtected(tab, reader, options, Boolean(tracked?.pinned), selectedID)) continue;
 			if (tracked?.groupId && preserveVirtual && getPref('enableVirtualMembers')) {
 				const member = toVirtualMember(tracked);
-				if (member) this.store.saveVirtualMember(member);
+				if (member) backups.push(member);
 			}
 			toClose.push(id);
 		}
 		if (!toClose.length) return 0;
-		tabs.close(toClose.length === 1 ? toClose[0] : toClose);
+		try {
+			tabs.close(toClose.length === 1 ? toClose[0] : toClose);
+		} catch (error) {
+			Zotero.logError(error as Error);
+			return 0;
+		}
+		if (backups.length) {
+			for (const member of backups) this.store.state.virtualMembers[member.key] = member;
+			this.store.save();
+		}
 		return toClose.length;
 	}
 
@@ -92,7 +104,7 @@ export class TabActionService {
 		const tabs = (this.win as any).Zotero_Tabs;
 		if (typeof tabs?.undoClose !== 'function') return false;
 		try {
-			tabs.undoClose();
+			void Promise.resolve(tabs.undoClose()).catch((error) => Zotero.logError(error as Error));
 			return true;
 		} catch (error) {
 			Zotero.logError(error as Error);
@@ -104,19 +116,22 @@ export class TabActionService {
 		if (!getPref('enableTabSleep')) return false;
 		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
 		const key = this.meta.tabKey(tab);
-		if (!tab || !key || this.store.isPinned(key)) return false;
+		if (!tab || !key || tabId === this.meta.getSelectedTabID() || tab.type.endsWith('-unloaded')) return false;
+		if (getPref('enablePinnedTabs') && this.store.isPinned(key)) return false;
 		const tabs = (this.win as any).Zotero_Tabs;
 		const reader = (Zotero.Reader as any)?.getByTabID?.(tabId);
-		if (isTabBusyOrProtected(tab, reader, { protectMedia: true }, false, '')) return false;
-		let unloaded = false;
-		if (typeof tabs?.unload === 'function') {
-			try { tabs.unload(tabId); unloaded = true; } catch { /* fallback below */ }
+		if (typeof tabs?.unload !== 'function' || tabs.canUnload?.(tabId) === false
+			|| isTabBusyOrProtected(tab, reader, { protectMedia: true }, false, '')) return false;
+		try {
+			tabs.unload(tabId);
+		} catch (error) {
+			Zotero.logError(error as Error);
+			return false;
 		}
-		if (!unloaded && reader?.unload) {
-			try { reader.unload(); unloaded = true; } catch { /* ignore */ }
-		}
+		const unloaded = this.meta.getNativeTabs().find((candidate) => candidate.id === tabId)?.type.endsWith('-unloaded') === true;
+		if (!unloaded) return false;
 		this.store.setSleeping(key, true);
-		return unloaded;
+		return true;
 	}
 
 	sleepInactiveTabs(): number {
@@ -125,8 +140,7 @@ export class TabActionService {
 		let count = 0;
 		for (const t of this.meta.buildTrackedTabs()) {
 			if (t.tab.id !== selected && !t.pinned && t.status === 'active') {
-				this.sleepTab(t.tab.id);
-				count++;
+				if (this.sleepTab(t.tab.id)) count++;
 			}
 		}
 		return count;
@@ -136,13 +150,21 @@ export class TabActionService {
 		try {
 			const item = Zotero.Items.get(itemID);
 			if (!item || item.deleted) return false;
-			const attachment = item.isAttachment() ? item : await item.getBestAttachment();
-			if (!attachment || attachment.deleted) return false;
-			if (attachment.isFileAttachment() && !await attachment.fileExists()) return false;
-			const key = `${attachment.libraryID}:${attachment.key}`;
+			const isNote = item.isNote?.() === true;
+			const target = isNote || item.isAttachment() ? item : await item.getBestAttachment();
+			if (!target || target.deleted) return false;
+			const key = `${target.libraryID}:${target.key}`;
 			const virtual = this.store.state.virtualMembers[key];
-			await Zotero.Reader.open(attachment.id, undefined, { openInBackground });
-			if (groupId) this.store.assignKey(key, groupId);
+			const existing = this.meta.getNativeTabs().find((tab) => tab.data?.itemID === target.id);
+			if (existing) {
+				if (!openInBackground) this.selectTab(existing.id);
+			} else if (isNote) {
+				await Zotero.Notes.open(target.id, undefined, { openInBackground });
+			} else {
+				if (target.isFileAttachment() && !await target.fileExists()) return false;
+				await Zotero.Reader.open(target.id, undefined, { openInBackground });
+			}
+			if (groupId !== undefined) this.store.assignKey(key, groupId);
 			const currentGroup = this.store.groupOfKey(key);
 			const hidden = this.store.state.groups.some((group) => group.id === currentGroup && group.hidden === true);
 			if (!hidden && virtual && this.store.state.virtualMembers[key] === virtual) this.store.removeVirtualMember(key);
@@ -159,7 +181,7 @@ export class TabActionService {
 		const hiddenNames = new Set(this.store.hiddenGroups().map((group) => group.name));
 		for (const t of this.meta.buildTrackedTabs()) {
 			if (filterSet && !filterSet.has(t.tab.id)) continue;
-			if (!t.groupId && t.collection && !hiddenNames.has(t.collection) && t.collection !== uncategorizedCollectionLabel()) {
+			if (!t.groupId && !t.pinned && t.collection && !hiddenNames.has(t.collection) && t.collection !== uncategorizedCollectionLabel()) {
 				const group = this.store.ensureGroup(t.collection);
 				this.store.assignKey(t.key, group.id);
 				moved++;
@@ -192,18 +214,19 @@ export class TabActionService {
 		return true;
 	}
 
-	showCollectionInLibrary(tabId: string): boolean {
+	async showCollectionInLibrary(tabId: string): Promise<boolean> {
 		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
 		const primary = this.meta.resolvePrimaryItem(tab?.data?.itemID ?? null);
 		if (!primary) return false;
 		const cols: number[] = primary.getCollections?.() || [];
 		const pane = (this.win as any).ZoteroPane;
 		if (cols.length && pane?.collectionsView?.selectCollection) {
-			pane.collectionsView.selectCollection(cols[0]);
-			pane.selectItem?.(primary.id);
-			return true;
+			const tabs = (this.win as any).Zotero_Tabs;
+			if (tabs && tabs.selectedID !== 'zotero-pane') await tabs.select('zotero-pane');
+			await pane.collectionsView.selectCollection(cols[0]);
+			return Boolean(await pane.selectItem?.(primary.id));
 		}
-		pane?.selectItem?.(primary.id);
+		await pane?.selectItem?.(primary.id);
 		return false;
 	}
 
@@ -218,10 +241,12 @@ export class TabActionService {
 		try {
 			const qc = (Zotero as any).QuickCopy;
 			if (qc?.getContentFromItems) {
-				const format = Zotero.Prefs.get('export.quickCopy.setting');
-				const content = qc.getContentFromItems(items, format);
+				const format = qc.getFormatFromURL?.(qc.lastActiveURL) || Zotero.Prefs.get('export.quickCopy.setting');
 				const helper = Cc['@mozilla.org/widget/clipboardhelper;1'].getService(Ci.nsIClipboardHelper);
-				helper.copyString(content?.text || items.map((i) => i.getField?.('title')).filter(Boolean).join('\n'));
+				const content = qc.getContentFromItems(items, format, (translation: { string?: string }, worked: boolean) => {
+					if (worked && translation.string) helper.copyString(translation.string);
+				});
+				if (content?.text) helper.copyString(content.text);
 			}
 		} catch (error) {
 			Zotero.logError(error as Error);
@@ -230,13 +255,18 @@ export class TabActionService {
 
 	async reloadTab(tabId: string): Promise<void> {
 		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
-		const itemID = tab?.data?.itemID;
-		if (!tab || typeof itemID !== 'number') return;
-		const item: any = Zotero.Items.get(itemID);
-		const targetID = item?.isAttachment?.() ? item.id : (await item?.getBestAttachment?.())?.id ?? itemID;
-		const tabs = (this.win as any).Zotero_Tabs;
-		tabs.close(tabId);
-		await new Promise((r) => this.win.setTimeout(r, 250));
-		await Zotero.Reader.open(targetID, undefined, { openInBackground: false });
+		if (!tab || !tab.type.startsWith('reader')) return;
+		if (tab.type === 'reader-unloaded') {
+			this.selectTab(tabId);
+			return;
+		}
+		const reader = Zotero.Reader.getByTabID(tabId);
+		if (isTabBusyOrProtected(tab, reader, { protectMedia: true }, false, '')) return;
+		try {
+			// The host Reader reloads in place and accepts no argument.
+			if (typeof reader?.reload === 'function') await Reflect.apply(reader.reload, reader, []);
+		} catch (error) {
+			Zotero.logError(error as Error);
+		}
 	}
 }

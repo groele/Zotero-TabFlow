@@ -9,9 +9,9 @@ export async function resolveFileAttachment(item: any): Promise<any | null> {
 }
 
 export async function openAttachmentFolder(item: any, fallbackWin?: Window | null): Promise<boolean> {
-	const att = await resolveFileAttachment(item);
-	if (!att) return false;
 	try {
+		const att = await resolveFileAttachment(item);
+		if (!att) return false;
 		const filePath = await att.getFilePathAsync?.();
 		if (filePath && (Zotero.File as any)?.pathToFile && (Zotero as any).launchFile) {
 			const folder = (Zotero.File as any).pathToFile(filePath)?.parent?.path;
@@ -19,20 +19,23 @@ export async function openAttachmentFolder(item: any, fallbackWin?: Window | nul
 				const now = Date.now();
 				const prev = lastLaunched.get(folder) ?? 0;
 				if (now - prev < RECENT_LAUNCH_INTERVAL_MS) return true;
-				(Zotero as any).launchFile(folder);
 				lastLaunched.set(folder, now);
+				try {
+					await (Zotero as any).launchFile(folder);
+				} catch (error) {
+					lastLaunched.delete(folder);
+					throw error;
+				}
 				return true;
 			}
 		}
+		const targetWin = (fallbackWin as any)?.ZoteroPane ? fallbackWin : Zotero.getMainWindow?.();
+		if ((targetWin as any)?.ZoteroPane?.showAttachmentInFilesystem) {
+			await (targetWin as any).ZoteroPane.showAttachmentInFilesystem(att.id);
+			return true;
+		}
 	} catch (error) {
 		Zotero.logError(error instanceof Error ? error : new Error(String(error)));
-	}
-	const targetWin = (fallbackWin as any)?.ZoteroPane
-		? fallbackWin
-		: (Zotero as any).getMainWindow?.() || Services.wm.getMostRecentWindow('navigator:browser');
-	if ((targetWin as any)?.ZoteroPane?.showAttachmentInFilesystem) {
-		await (targetWin as any).ZoteroPane.showAttachmentInFilesystem(att.id);
-		return true;
 	}
 	return false;
 }

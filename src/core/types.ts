@@ -59,6 +59,7 @@ export interface TabSessionSnapshot {
 	remarks?: Record<string, TabRemark>;
 	ungroupedName?: string;
 	ungroupedColor?: string;
+	ungroupedHeadingHidden?: boolean;
 	kind?: SessionSnapshotKind;
 }
 
@@ -67,6 +68,7 @@ export interface TabFlowState {
 	groups: TabGroup[];
 	assignments: Record<string, string>;
 	ungroupedColor: string;
+	ungroupedHeadingHidden?: boolean;
 	ungroupedName?: string;
 	collapsed: string[];
 	order: string[];
@@ -80,10 +82,30 @@ export interface TabFlowState {
 	rollingSessions?: TabSessionSnapshot[];
 }
 
+export function createEmptyState(): TabFlowState {
+	return {
+		version: 1,
+		groups: [],
+		assignments: {},
+		ungroupedColor: '#737373',
+		collapsed: [],
+		order: [''],
+		history: {},
+		remarks: {},
+		groupDisplay: {},
+		pinned: [],
+		sleeping: [],
+		virtualMembers: {},
+		sessions: [],
+		rollingSessions: [],
+	};
+}
+
 export interface NativeTabLike {
 	id: string;
 	type: string;
 	title?: string;
+	audioStatus?: { active?: boolean; paused?: boolean };
 	data?: {
 		itemID?: number;
 		[key: string]: unknown;

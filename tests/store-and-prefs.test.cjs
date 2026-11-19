@@ -98,7 +98,26 @@ test('dissolving a group atomically clears group references while preserving vir
 	store.readOnly = true;
 	assert.equal(store.dissolveGroup(readonly.id), false);
 	assert.equal(store.state.groups.some((candidate) => candidate.id === readonly.id), true);
+});
+
+test('dissolving the ungrouped section persists its expanded tabs and leaves named groups intact', () => {
+	memPrefs.clear();
+	const store = new TabFlowStore();
+	const named = store.ensureGroup('Keep this group');
+	store.assignKey('1:NAMED', named.id);
+	store.setCollapsed('', true);
+	assert.equal(store.dissolveGroup(''), true);
 	assert.equal(store.dissolveGroup(''), false);
+
+	const reloaded = new TabFlowStore();
+	reloaded.load();
+	assert.equal(reloaded.state.ungroupedHeadingHidden, true);
+	assert.equal(reloaded.state.collapsed.includes(''), false);
+	assert.equal(reloaded.groupOfKey('1:NAMED'), named.id);
+	assert.equal(reloaded.groupOfKey('1:LOOSE'), '');
+	assert.equal(reloaded.setUngroupedHeadingHidden(false), true);
+	reloaded.load();
+	assert.equal(reloaded.state.ungroupedHeadingHidden, false);
 });
 
 test('color normalization and contrast ink calculation', () => {

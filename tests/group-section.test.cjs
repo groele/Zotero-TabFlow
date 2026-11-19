@@ -15,6 +15,7 @@ class ElementStub extends EventTarget {
 	}
 	remove() { this.isConnected = false; }
 	setAttribute() {}
+	toggleAttribute() {}
 	focus() {}
 	select() {}
 }
@@ -76,4 +77,16 @@ test('delayed double-click restores the prior fold state and disposal clears pen
 	view.dispose();
 	flush();
 	assert.deepEqual(folds, [true, false, true]);
+});
+
+test('dissolved heading can be hidden and restored without replacing the tab body', () => {
+	const { view } = sectionFixture();
+	const row = new ElementStub();
+	view.body.append(row);
+	view.update({ name: 'Ungrouped' }, false, 1, false);
+	assert.equal(view.heading.hidden, true);
+	assert.equal(view.body.hidden, false);
+	assert.equal(view.body.children[0], row);
+	view.update({ name: 'Ungrouped' }, false, 1);
+	assert.equal(view.heading.hidden, false);
 });

@@ -48,10 +48,13 @@ export class TabContextMenuController {
 	}
 
 	openTabMenu(event: MouseEvent, tracked: TrackedTab): void {
-		if (!getPref('enableTabContextMenu')) return;
+		const tabMenuEnabled = getPref('enableTabContextMenu');
+		if (!tabMenuEnabled && (tracked.groupId || !this.store.state.ungroupedHeadingHidden)) return;
 		event.preventDefault();
 		event.stopPropagation();
 		this.openAt(event, (popup) => {
+			if (!tracked.groupId) this.addUngroupedHeadingRestore(popup);
+			if (!tabMenuEnabled) return;
 			if (getPref('enablePinnedTabs')) {
 				this.item(popup, tracked.pinned ? t('zotero-tabflow-menu-unpin', '取消固定标签') : `📌 ${t('zotero-tabflow-menu-pin', '固定标签（防误关）')}`, () => {
 					this.store.togglePinned(tracked.key);
@@ -108,10 +111,10 @@ export class TabContextMenuController {
 
 			popup.append(this.xul('menuseparator'));
 			this.item(popup, t('zotero-tabflow-menu-show-library', '在文献库中定位'), () => this.actions.showInLibrary(tracked.tab.id));
-			this.item(popup, t('zotero-tabflow-menu-show-collection', '在集合树中定位所属集合'), () => this.actions.showCollectionInLibrary(tracked.tab.id));
+			this.item(popup, t('zotero-tabflow-menu-show-collection', '在集合树中定位所属集合'), () => void this.actions.showCollectionInLibrary(tracked.tab.id).catch((error) => Zotero.logError(error)));
 			if (getPref('enableCopyReference')) this.item(popup, t('zotero-tabflow-menu-copy-ref', '复制引用到剪贴板'), () => this.actions.copyReference(tracked.tab.id));
 			if (getPref('enableShowInFilesystem')) this.item(popup, t('zotero-tabflow-menu-show-fs', '在文件管理器中显示'), () => void this.actions.showInFilesystem(tracked.tab.id));
-			if (getPref('enableReloadTab')) this.item(popup, t('zotero-tabflow-menu-reload', '重新加载标签页'), () => void this.actions.reloadTab(tracked.tab.id));
+			if (getPref('enableReloadTab') && tracked.tab.type.startsWith('reader')) this.item(popup, t('zotero-tabflow-menu-reload', '重新加载标签页'), () => void this.actions.reloadTab(tracked.tab.id));
 			popup.append(this.xul('menuseparator'));
 			if (getPref('enableVirtualMembers') && tracked.groupId) {
 				this.item(popup, t('zotero-tabflow-menu-close-virtual', '关闭标签（保留在分组）'), () => void this.actions.closeTab(tracked.tab.id, true).then(this.onRefresh));
@@ -151,21 +154,8 @@ export class TabContextMenuController {
 				if (getPref('enableGroupHiding')) {
 					this.item(popup, t('zotero-tabflow-hide-group', '隐藏分组'), () => this.actions.hideGroup(group.id));
 				}
-				this.item(popup, t('zotero-tabflow-dissolve-group', '解散此分组'), () => {
-					if (Services.prompt.confirm(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-confirm', `解散“${group.name}”？标签页将保留并回到未分组。`, { name: group.name }))) {
-						try {
-							if (!this.store.dissolveGroup(group.id)) {
-								Services.prompt.alert(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-failed', '无法解散分组：数据为只读，或分组已不存在。'));
-								return;
-							}
-							this.onRefresh();
-						} catch (error) {
-							Zotero.logError(error as Error);
-							Services.prompt.alert(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-failed', '无法解散分组：数据为只读，或分组已不存在。'));
-						}
-					}
-				});
 			}
+			this.item(popup, t('zotero-tabflow-dissolve-group', '解散此分组'), () => this.confirmDissolve(group));
 			const colorMenu = this.xul('menu');
 			colorMenu.setAttribute('label', t('zotero-tabflow-menu-group-color', '分组颜色'));
 			const colorPop = this.xul('menupopup');
@@ -205,6 +195,7 @@ export class TabContextMenuController {
 		event.preventDefault();
 		event.stopPropagation();
 		this.openAt(event, (popup) => {
+			if (!groupId) this.addUngroupedHeadingRestore(popup);
 			this.item(popup, `▶ ${t('zotero-tabflow-menu-load-virtual', '加载标签页')}`, () => void this.actions.openVirtualOrItem(member.itemID, groupId).then(this.onRefresh));
 			this.item(popup, t('zotero-tabflow-menu-remove-virtual', '从分组移除虚拟成员'), () => {
 				this.store.removeVirtualMember(member.key);
@@ -212,6 +203,30 @@ export class TabContextMenuController {
 				this.onRefresh();
 			});
 		});
+	}
+
+	private addUngroupedHeadingRestore(popup: Element): void {
+		if (!this.store.state.ungroupedHeadingHidden) return;
+		this.item(popup, t('zotero-tabflow-show-ungrouped-heading', '恢复未分组标题'), () => {
+			if (this.store.setUngroupedHeadingHidden(false)) this.onRefresh();
+		}, { disabled: this.store.readOnly });
+	}
+
+	private confirmDissolve(group: TabGroup): void {
+		const title = t('zotero-tabflow-dissolve-group', '解散此分组');
+		try {
+			if (group.id) {
+				const message = t('zotero-tabflow-dissolve-group-confirm', `解散“${group.name}”？标签页将保留并回到未分组。`, { name: group.name });
+				if (!Services.prompt.confirm(this.win, title, message)) return;
+			}
+			if (this.store.dissolveGroup(group.id)) {
+				this.onRefresh();
+				return;
+			}
+		} catch (error) {
+			Zotero.logError(error as Error);
+		}
+		Services.prompt.alert(this.win, title, t('zotero-tabflow-dissolve-group-failed', '无法解散分组：数据为只读，或分组已不存在。'));
 	}
 
 	dispose(): void {

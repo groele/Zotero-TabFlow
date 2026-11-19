@@ -76,7 +76,7 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 #ztf-inline .ztf-section-body { display: contents; }
 #ztf-inline .ztf-heading[hidden], #ztf-inline .ztf-section-body[hidden],
 .ztf-sb-group-head[hidden], .ztf-sb-group-body[hidden] { display: none; }
-#ztf-inline .ztf-section::after {
+#ztf-inline .ztf-section:not([data-ztf-loose-tabs])::after {
   content: ""; position: absolute; left: 2px; right: 2px; bottom: -3px; height: 2px; border-radius: 1px;
   background: color-mix(in srgb, var(--ztf-color, transparent) 65%, transparent); pointer-events: none;
 }
