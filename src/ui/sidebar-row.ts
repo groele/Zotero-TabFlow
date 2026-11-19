@@ -87,11 +87,13 @@ export function buildSidebarTabRow(deps: SidebarRowDeps, item: TrackedTab, selec
 	};
 	if (item.itemID && item.tab.type.startsWith('reader')) row.append(folderBtn);
 	deps.selection?.addCheckbox(row, item);
-	row.onclick = () => deps.actions.selectTab(item.tab.id);
-	row.oncontextmenu = (e: Event) => deps.menus.openTabMenu(e as MouseEvent, item);
+	row.onclick = () => { deps.hoverCard.hide(); deps.actions.selectTab(item.tab.id); };
+	row.oncontextmenu = (e: Event) => { deps.hoverCard.hide(); deps.menus.openTabMenu(e as MouseEvent, item); };
 	row.onmouseenter = () => deps.hoverCard.scheduleShow(() => deps.hoverCard.show(row, item, 'right'), 120);
 	row.onmouseleave = () => deps.hoverCard.hide();
+	row.onmousedown = () => deps.hoverCard.hide();
 	row.ondragstart = (event: Event) => {
+		deps.hoverCard.hide();
 		deps.setDraggedKey(item.key);
 		deps.setDraggedTabId(item.tab.id);
 		const dt = (event as DragEvent).dataTransfer;

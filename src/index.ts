@@ -32,6 +32,7 @@ class WindowWorkspace {
 	private lastSelected = '';
 	private disposed = false;
 	private ageTickCount = 0;
+	private onResize = (): void => { this.schedule(); };
 
 	private saveRollingIfNeeded(): void {
 		if (!getPref('enableSessions') || !getPref('enableRollingSnapshots')) return;
@@ -77,6 +78,7 @@ class WindowWorkspace {
 
 		this.spotlight.init();
 		this.itemMenus.attach();
+		this.win.addEventListener?.('resize', this.onResize);
 
 		this.notifierID = Zotero.Notifier.registerObserver(
 			{
@@ -167,6 +169,7 @@ class WindowWorkspace {
 
 	dispose(): void {
 		this.disposed = true;
+		this.win.removeEventListener?.('resize', this.onResize);
 		try { this.saveRollingIfNeeded(); } catch { /* Best-effort snapshot on unload */ }
 		if (this.refreshTimer !== null) this.win.clearTimeout(this.refreshTimer);
 		if (this.ageTimer !== null) this.win.clearInterval(this.ageTimer);

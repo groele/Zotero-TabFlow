@@ -262,6 +262,9 @@ test('horizontal inactive tabs compress to ellipsis chips while active tab stays
 	assert.equal(shouldCollapseHorizontalChip('auto', 5, false), false);
 	assert.equal(shouldCollapseHorizontalChip('auto', 6, false), true);
 	assert.equal(shouldCollapseHorizontalChip('auto', 6, true), false);
+	assert.equal(shouldCollapseHorizontalChip('auto', 10, false, false), false);
+	assert.equal(shouldCollapseHorizontalChip('auto', 3, false, true), true);
+	assert.equal(shouldCollapseHorizontalChip('auto', 3, true, true), false);
 	assert.equal(shouldCollapseHorizontalChip('off', 12, false), false);
 
 	const { store } = fixture();
@@ -304,7 +307,11 @@ test('group-only session snapshot, snapshot update/rename, collapseOtherGroups, 
 	const updated = updateExistingSession(store.state, saved.id, ['1:A', '1:B', '1:C']);
 	assert.ok(updated);
 	assert.equal(updated.name, 'Optics Renamed');
-	assert.deepEqual(updated.openKeys, ['1:A', '1:B', '1:C']);
+	assert.deepEqual(updated.openKeys, ['1:A', '1:C']);
+
+	const fullSaved = store.saveSession('Full Workspace', ['1:A']);
+	const fullUpdated = updateExistingSession(store.state, fullSaved.id, ['1:A', '1:B', '1:C']);
+	assert.deepEqual(fullUpdated.openKeys, ['1:A', '1:B', '1:C']);
 
 	store.collapseOtherGroups(g1.id);
 	assert.ok(!store.state.collapsed.includes(g1.id));
@@ -358,4 +365,39 @@ test('cross-area drag MIME helper and SidebarHoverCard below placement with show
 	card.hide();
 	assert.equal(cardEl.hidden, true);
 	card.dispose();
+});
+
+test('saving incrementally overwrites same workspace session (including legacy HH:MM suffixes) and scoped group update stays scoped', () => {
+	const { store } = fixture();
+	const { updateExistingSession } = require('../src/core/session-store.ts');
+	const first = store.saveSession('ReS2 · 16:43', ['1:1', '1:2']);
+	// Legacy second duplicate with another HH:MM timestamp (like pre-v17.6.1 saves)
+	store.state.sessions.unshift({ ...first, id: 'legacy-dup', name: 'ReS2 · 17:23', openKeys: ['1:1', '1:2', '1:4'] });
+	assert.equal(store.state.sessions.length, 2);
+
+	// Saving again with clean base name overwrites AND consolidates all matching legacy ReS2 · HH:MM rows
+	const updated = store.saveSession('ReS2', ['1:1', '1:2', '1:3']);
+	assert.equal(store.state.sessions.length, 1);
+	assert.equal(updated.name, 'ReS2');
+	assert.equal(updated.openKeys.length, 3);
+
+	// Distinct workspace names still create separate cards, and generic blank auto-names remain distinct
+	store.saveSession('ReS2 - Branch', ['1:4']);
+	store.saveSession('工作区会话 · 16:43', ['1:5']);
+	store.saveSession('工作区会话 · 17:23', ['1:6']);
+	assert.equal(store.state.sessions.length, 4);
+
+	// Group-scoped snapshots retain scopedGroupId on updateExistingSession
+	const g1 = store.ensureGroup('Optics');
+	const g2 = store.ensureGroup('Other');
+	store.assignKey('1:G1', g1.id);
+	store.assignKey('1:G2', g2.id);
+	const groupOnly = store.saveGroupSession('Optics Only', g1.id, ['1:G1', '1:G2']);
+	assert.equal(groupOnly.scopedGroupId, g1.id);
+	assert.deepEqual(groupOnly.openKeys, ['1:G1']);
+	store.assignKey('1:G1B', g1.id);
+	const refreshed = updateExistingSession(store.state, groupOnly.id, ['1:G1', '1:G1B', '1:G2']);
+	assert.ok(refreshed);
+	assert.deepEqual(refreshed.openKeys, ['1:G1', '1:G1B']);
+	assert.equal(refreshed.scopedGroupId, g1.id);
 });

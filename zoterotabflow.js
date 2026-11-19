@@ -5,7 +5,7 @@
   var PREF_PREFIX = "extensions.zotero.tabflow.";
   var DEFAULT_PREFS = {
     enableHorizontalGroups: true,
-    horizontalTabCompactMode: "inactive",
+    horizontalTabCompactMode: "auto",
     enableGroupHiding: true,
     compactTopBar: false,
     enableVerticalSidebar: true,
@@ -148,6 +148,31 @@
   function appendManualSession(state, snap) {
     state.sessions = [snap, ...state.sessions].slice(0, MAX_MANUAL_SESSIONS);
   }
+  function stripSessionTimestamp(name) {
+    return name.trim().replace(/\s*·\s*\d{2}:\d{2}$/, "").trim();
+  }
+  function isMatchingSession(s, name, kind) {
+    const normKind = s.kind || "manual";
+    if (normKind !== kind) return false;
+    const trimmed = name.trim();
+    if (s.name.trim() === trimmed) return true;
+    const base = stripSessionTimestamp(trimmed);
+    if (!base || ["工作区会话", "Workspace Session", "布局模板", "Layout Template"].includes(base)) return false;
+    return stripSessionTimestamp(s.name) === base;
+  }
+  function findMatchingSessionIndex(state, name, kind = "manual") {
+    const trimmed = name.trim();
+    const exact = state.sessions.findIndex((s) => (s.kind || "manual") === kind && s.name.trim() === trimmed);
+    return exact >= 0 ? exact : state.sessions.findIndex((s) => isMatchingSession(s, trimmed, kind));
+  }
+  function upsertManualSession(state, snap) {
+    const kind = snap.kind || "manual";
+    const idx = findMatchingSessionIndex(state, snap.name, kind);
+    const next = idx >= 0 ? { ...snap, id: state.sessions[idx].id } : snap;
+    const rest = idx >= 0 ? state.sessions.filter((s) => !isMatchingSession(s, snap.name, kind)) : state.sessions;
+    state.sessions = [next, ...rest].slice(0, MAX_MANUAL_SESSIONS);
+    return next;
+  }
   function appendRollingSnapshot(state, snap) {
     const current = state.rollingSessions ?? [];
     if (current[0] && sessionLayoutFingerprint(current[0]) === sessionLayoutFingerprint(snap)) {
@@ -247,15 +272,16 @@
       order: targetGroup ? [targetGroup.id] : [],
       collapsed: [],
       remarks,
-      kind: "manual"
+      kind: "manual",
+      scopedGroupId: groupId
     };
   }
   function updateExistingSession(state, id, openKeys) {
     const idx = state.sessions.findIndex((s) => s.id === id);
     if (idx < 0) return null;
     const current = state.sessions[idx];
-    const next = buildSessionSnapshot(state, current.name, openKeys, current.kind === "template" ? "template" : "manual");
-    const updated = { ...next, id: current.id, name: current.name };
+    const next = current.scopedGroupId !== void 0 ? buildGroupSessionSnapshot(state, current.name, current.scopedGroupId, openKeys) : buildSessionSnapshot(state, current.name, openKeys, current.kind === "template" ? "template" : "manual");
+    const updated = { ...next, id: current.id, name: current.name, scopedGroupId: current.scopedGroupId };
     state.sessions[idx] = updated;
     return updated;
   }
@@ -591,15 +617,15 @@
     }
     saveSession(name, openKeys) {
       const snapshot = buildSessionSnapshot(this.state, name || t("zotero-tabflow-session-default-name", "工作区会话"), openKeys, "manual");
-      appendManualSession(this.state, snapshot);
+      const saved = upsertManualSession(this.state, snapshot);
       this.save();
-      return snapshot;
+      return saved;
     }
     saveGroupSession(name, groupId, openKeys) {
       const snapshot = buildGroupSessionSnapshot(this.state, name, groupId, openKeys);
-      appendManualSession(this.state, snapshot);
+      const saved = upsertManualSession(this.state, snapshot);
       this.save();
-      return snapshot;
+      return saved;
     }
     savePreReplaceSnapshot(openKeys) {
       const stamp = formatSnapshotTimestamp(Date.now());
@@ -611,9 +637,9 @@
     }
     saveLayoutTemplate(name) {
       const snapshot = buildSessionSnapshot(this.state, name || t("zotero-tabflow-template-default-name", "布局模板"), [], "template");
-      appendManualSession(this.state, snapshot);
+      const saved = upsertManualSession(this.state, snapshot);
       this.save();
-      return snapshot;
+      return saved;
     }
     saveRollingSnapshot(openKeys) {
       if (this.readOnly || !getPref("enableSessions") || !getPref("enableRollingSnapshots")) return null;
@@ -1643,9 +1669,10 @@
   function shouldRenderGroupHeading(groupId, hasOpenMembers, hasVirtualMembers, hasCustomName) {
     return Boolean(groupId || hasCustomName || hasOpenMembers || hasVirtualMembers);
   }
-  function shouldCollapseHorizontalChip(mode, totalChips, isSelected) {
+  function shouldCollapseHorizontalChip(mode, totalChips, isSelected, overflowed) {
     if (isSelected || mode === "off") return false;
-    return mode === "inactive" || totalChips > 5;
+    if (mode === "inactive") return true;
+    return overflowed ?? totalChips > 5;
   }
   function indexGroupMembers(members, groupOf) {
     const groups = /* @__PURE__ */ new Map();
@@ -2245,9 +2272,10 @@
     toolbarActions = null;
     toolbar = new ToolbarActions();
     drag;
-    lastSelectedID = "";
-    groupSections = /* @__PURE__ */ new Map();
     addGroupButton = null;
+    lastSelectedID = "";
+    layoutRetry = false;
+    groupSections = /* @__PURE__ */ new Map();
     h(tag, className) {
       const el = this.doc.createElementNS("http://www.w3.org/1999/xhtml", tag);
       if (className) el.className = className;
@@ -2329,6 +2357,9 @@
       const collapsedIds = new Set(this.store.state.collapsed);
       const compactPref = getPref("horizontalTabCompactMode");
       const totalInlineChips = tracked.filter((t2) => !t2.pinned).length + virtualMembers.filter((m) => visibleGroupIds.has(this.store.groupOfKey(m.key))).length;
+      const measureAuto = compactPref === "auto" && this.root.clientWidth > 0;
+      const autoCandidates = [];
+      const preCollapse = (isSelected) => measureAuto ? false : shouldCollapseHorizontalChip(compactPref, totalInlineChips, isSelected);
       const groups = rawGroups.filter((g) => {
         const hasMembers = unpinned.has(g.id);
         const hasVirtuals = virtualsByGroup.has(g.id);
@@ -2362,14 +2393,21 @@
         this.drag.bindGroupDrag(section.heading, g.id, collapsed);
         if (!collapsed) {
           const nodes = this.doc.createDocumentFragment();
-          for (const t2 of members) nodes.append(this.buildTabNode(t2, selectedID, shouldCollapseHorizontalChip(compactPref, totalInlineChips, t2.tab.id === selectedID)));
-          const collapseVirtual = shouldCollapseHorizontalChip(compactPref, totalInlineChips, false);
+          for (const t2 of members) {
+            const selected = t2.tab.id === selectedID;
+            const chip = this.buildTabNode(t2, selectedID, preCollapse(selected));
+            const lbl = measureAuto && !selected ? chip.querySelector(".ztf-doc-title") : null;
+            if (lbl) autoCandidates.push({ node: chip, label: lbl });
+            nodes.append(chip);
+          }
+          const collapseVirtual = preCollapse(false);
           for (const v of virtuals) {
             const vNode = this.h("button", `ztf-doc ztf-virtual${collapseVirtual ? " ztf-chip-collapsed" : ""}`);
             vNode.type = "button";
             const label = this.h("span", "ztf-doc-title");
             label.textContent = collapseVirtual ? "···" : `◌ ${this.meta.getDisplayTitle(v)}`;
             vNode.append(label);
+            if (measureAuto) autoCandidates.push({ node: vNode, label });
             vNode.setAttribute("aria-label", v.title);
             vNode.title = t("zotero-tabflow-virtual-reload-tip", `虚拟保留成员（点击重新加载）：${v.title}`, { title: v.title });
             vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id, false, v.key).then((opened) => {
@@ -2395,6 +2433,18 @@
         this.addGroupButton = addBtn;
       }
       reconcileGroupSections(this.root, this.groupSections, groups.map((g) => g.id), this.addGroupButton);
+      if (measureAuto && autoCandidates.length && this.root.scrollWidth > this.root.clientWidth + 2) {
+        for (const item of autoCandidates) {
+          item.node.classList.add("ztf-chip-collapsed");
+          item.label.textContent = "···";
+        }
+      } else if (compactPref === "auto" && this.root.clientWidth === 0 && !this.layoutRetry && typeof this.win?.requestAnimationFrame === "function") {
+        this.layoutRetry = true;
+        this.win.requestAnimationFrame(() => {
+          this.layoutRetry = false;
+          this.render();
+        });
+      }
       this.root.scrollLeft = scroll;
       if (selectedID && selectedID !== this.lastSelectedID) {
         this.lastSelectedID = selectedID;
@@ -2465,8 +2515,12 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
           void this.actions.closeTab(tab.tab.id, true).then(this.onRefresh);
         }
       };
-      node.oncontextmenu = (e) => this.menus.openTabMenu(e, tab);
+      node.oncontextmenu = (e) => {
+        this.hoverCard?.hide();
+        this.menus.openTabMenu(e, tab);
+      };
       this.drag.bindTabDrag(node, tab);
+      node.addEventListener("dragstart", () => this.hoverCard?.hide());
       return node;
     }
     renderToolbarButtons(compactMode, sidebarHealthy, tracked) {
@@ -3861,22 +3915,28 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         });
         popup.append(this.xul("menuseparator"));
         if (getPref("enableSessions") && !this.store.readOnly) {
+          const promptSave = (defaultName, scopeGroup) => {
+            const idx = findMatchingSessionIndex(this.store.state, defaultName, "manual");
+            const label = idx >= 0 ? t("zotero-tabflow-sessions-overwrite-prompt", "已存在同名工作区，确认将覆盖更新为当前最新状态（也可改名另存）：") : t("zotero-tabflow-sessions-save-prompt", "请输入会话名称：");
+            const val = { value: defaultName };
+            if (!Services.prompt.prompt(this.win, t("zotero-tabflow-hub-save-session", "保存工作区"), label, val, null, {})) return;
+            const keys = this.meta.buildTrackedTabs().map((tab) => tab.key);
+            if (scopeGroup) this.store.saveGroupSession(val.value, group.id, keys);
+            else this.store.saveSession(val.value, keys);
+            this.onRefresh();
+          };
           this.item(popup, `💾 ${t("zotero-tabflow-menu-save-to-workspace", "保存到工作区…")}`, () => {
             this.defer(() => {
               const baseName = group.id || this.store.state.ungroupedName ? group.name : t("zotero-tabflow-session-default-name", "工作区会话");
-              const val = { value: `${baseName} · ${formatSnapshotTimestamp(Date.now())}` };
-              if (!Services.prompt.prompt(this.win, t("zotero-tabflow-hub-save-session", "保存工作区"), t("zotero-tabflow-sessions-save-prompt", "请输入会话名称："), val, null, {})) return;
-              this.store.saveSession(val.value, this.meta.buildTrackedTabs().map((tab) => tab.key));
-              this.onRefresh();
+              promptSave(baseName, false);
             });
           });
           this.item(popup, `📦 ${t("zotero-tabflow-menu-save-group-workspace", "仅保存本组到工作区…")}`, () => {
             this.defer(() => {
               const baseName = group.name || t("zotero-tabflow-session-default-name", "工作区会话");
-              const val = { value: `${baseName} · ${formatSnapshotTimestamp(Date.now())}` };
-              if (!Services.prompt.prompt(this.win, t("zotero-tabflow-hub-save-session", "保存工作区"), t("zotero-tabflow-sessions-save-prompt", "请输入会话名称："), val, null, {})) return;
-              this.store.saveGroupSession(val.value, group.id, this.meta.buildTrackedTabs().map((tab) => tab.key));
-              this.onRefresh();
+              const idx = findMatchingSessionIndex(this.store.state, baseName, "manual");
+              const suggested = idx >= 0 && this.store.state.sessions[idx]?.scopedGroupId === void 0 ? `${baseName}（${t("zotero-tabflow-menu-group-tag", "仅本组")}）` : baseName;
+              promptSave(suggested, true);
             });
           });
         }
@@ -4128,11 +4188,19 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     };
     if (item.itemID && item.tab.type.startsWith("reader")) row.append(folderBtn);
     deps.selection?.addCheckbox(row, item);
-    row.onclick = () => deps.actions.selectTab(item.tab.id);
-    row.oncontextmenu = (e) => deps.menus.openTabMenu(e, item);
+    row.onclick = () => {
+      deps.hoverCard.hide();
+      deps.actions.selectTab(item.tab.id);
+    };
+    row.oncontextmenu = (e) => {
+      deps.hoverCard.hide();
+      deps.menus.openTabMenu(e, item);
+    };
     row.onmouseenter = () => deps.hoverCard.scheduleShow(() => deps.hoverCard.show(row, item, "right"), 120);
     row.onmouseleave = () => deps.hoverCard.hide();
+    row.onmousedown = () => deps.hoverCard.hide();
     row.ondragstart = (event) => {
+      deps.hoverCard.hide();
       deps.setDraggedKey(item.key);
       deps.setDraggedTabId(item.tab.id);
       const dt = event.dataTransfer;
@@ -5170,6 +5238,9 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
     lastSelected = "";
     disposed = false;
     ageTickCount = 0;
+    onResize = () => {
+      this.schedule();
+    };
     saveRollingIfNeeded() {
       if (!getPref("enableSessions") || !getPref("enableRollingSnapshots")) return;
       const keys = this.meta.buildTrackedTabs().map((t2) => t2.key);
@@ -5189,6 +5260,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       this.hoverCard.mount();
       this.spotlight.init();
       this.itemMenus.attach();
+      this.win.addEventListener?.("resize", this.onResize);
       this.notifierID = Zotero.Notifier.registerObserver(
         {
           notify: (event, _type, ids) => {
@@ -5273,6 +5345,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
     }
     dispose() {
       this.disposed = true;
+      this.win.removeEventListener?.("resize", this.onResize);
       try {
         this.saveRollingIfNeeded();
       } catch {

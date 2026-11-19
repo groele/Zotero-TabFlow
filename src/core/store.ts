@@ -3,7 +3,7 @@ import { t } from './i18n.ts';
 import { PREF_PREFIX, getPref } from './prefs.ts';
 import {
 	appendManualSession, appendRollingSnapshot, applySessionLayout,
-	buildGroupSessionSnapshot, buildSessionSnapshot, formatSnapshotTimestamp, MAX_MANUAL_SESSIONS, pruneHistory,
+	buildGroupSessionSnapshot, buildSessionSnapshot, formatSnapshotTimestamp, MAX_MANUAL_SESSIONS, pruneHistory, upsertManualSession,
 } from './session-store.ts';
 import { createEmptyState } from './types.ts';
 import type { TabDisplayMode, TabFlowState, TabGroup, TabRemark, TabSessionSnapshot, VirtualMemberMeta } from './types.ts';
@@ -273,16 +273,16 @@ export class TabFlowStore {
 
 	saveSession(name: string, openKeys: string[]): TabSessionSnapshot {
 		const snapshot = buildSessionSnapshot(this.state, name || t('zotero-tabflow-session-default-name', '工作区会话'), openKeys, 'manual');
-		appendManualSession(this.state, snapshot);
+		const saved = upsertManualSession(this.state, snapshot);
 		this.save();
-		return snapshot;
+		return saved;
 	}
 
 	saveGroupSession(name: string, groupId: string, openKeys: string[]): TabSessionSnapshot {
 		const snapshot = buildGroupSessionSnapshot(this.state, name, groupId, openKeys);
-		appendManualSession(this.state, snapshot);
+		const saved = upsertManualSession(this.state, snapshot);
 		this.save();
-		return snapshot;
+		return saved;
 	}
 
 	savePreReplaceSnapshot(openKeys: string[]): TabSessionSnapshot {
@@ -296,9 +296,9 @@ export class TabFlowStore {
 
 	saveLayoutTemplate(name: string): TabSessionSnapshot {
 		const snapshot = buildSessionSnapshot(this.state, name || t('zotero-tabflow-template-default-name', '布局模板'), [], 'template');
-		appendManualSession(this.state, snapshot);
+		const saved = upsertManualSession(this.state, snapshot);
 		this.save();
-		return snapshot;
+		return saved;
 	}
 
 	saveRollingSnapshot(openKeys: string[]): TabSessionSnapshot | null {

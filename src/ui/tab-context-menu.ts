@@ -1,6 +1,6 @@
 import { t } from '../core/i18n.ts';
 import { getPref } from '../core/prefs.ts';
-import { formatSnapshotTimestamp } from '../core/session-store.ts';
+import { findMatchingSessionIndex } from '../core/session-store.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import { DEFAULT_PALETTE, type TabGroup, type TrackedTab, type VirtualMemberMeta } from '../core/types.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
@@ -191,24 +191,34 @@ export class TabContextMenuController {
 			});
 			popup.append(this.xul('menuseparator'));
 			if (getPref('enableSessions') && !this.store.readOnly) {
+				const promptSave = (defaultName: string, scopeGroup: boolean) => {
+					const idx = findMatchingSessionIndex(this.store.state, defaultName, 'manual');
+					const label = idx >= 0
+						? t('zotero-tabflow-sessions-overwrite-prompt', '已存在同名工作区，确认将覆盖更新为当前最新状态（也可改名另存）：')
+						: t('zotero-tabflow-sessions-save-prompt', '请输入会话名称：');
+					const val = { value: defaultName };
+					if (!Services.prompt.prompt(this.win, t('zotero-tabflow-hub-save-session', '保存工作区'), label, val, null, {})) return;
+					const keys = this.meta.buildTrackedTabs().map((tab) => tab.key);
+					if (scopeGroup) this.store.saveGroupSession(val.value, group.id, keys);
+					else this.store.saveSession(val.value, keys);
+					this.onRefresh();
+				};
 				this.item(popup, `💾 ${t('zotero-tabflow-menu-save-to-workspace', '保存到工作区…')}`, () => {
 					this.defer(() => {
 						const baseName = (group.id || this.store.state.ungroupedName)
 							? group.name
 							: t('zotero-tabflow-session-default-name', '工作区会话');
-						const val = { value: `${baseName} · ${formatSnapshotTimestamp(Date.now())}` };
-						if (!Services.prompt.prompt(this.win, t('zotero-tabflow-hub-save-session', '保存工作区'), t('zotero-tabflow-sessions-save-prompt', '请输入会话名称：'), val, null, {})) return;
-						this.store.saveSession(val.value, this.meta.buildTrackedTabs().map((tab) => tab.key));
-						this.onRefresh();
+						promptSave(baseName, false);
 					});
 				});
 				this.item(popup, `📦 ${t('zotero-tabflow-menu-save-group-workspace', '仅保存本组到工作区…')}`, () => {
 					this.defer(() => {
 						const baseName = group.name || t('zotero-tabflow-session-default-name', '工作区会话');
-						const val = { value: `${baseName} · ${formatSnapshotTimestamp(Date.now())}` };
-						if (!Services.prompt.prompt(this.win, t('zotero-tabflow-hub-save-session', '保存工作区'), t('zotero-tabflow-sessions-save-prompt', '请输入会话名称：'), val, null, {})) return;
-						this.store.saveGroupSession(val.value, group.id, this.meta.buildTrackedTabs().map((tab) => tab.key));
-						this.onRefresh();
+						const idx = findMatchingSessionIndex(this.store.state, baseName, 'manual');
+						const suggested = idx >= 0 && this.store.state.sessions[idx]?.scopedGroupId === undefined
+							? `${baseName}（${t('zotero-tabflow-menu-group-tag', '仅本组')}）`
+							: baseName;
+						promptSave(suggested, true);
 					});
 				});
 			}

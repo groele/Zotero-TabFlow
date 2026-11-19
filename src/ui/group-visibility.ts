@@ -14,9 +14,11 @@ export function shouldCollapseHorizontalChip(
 	mode: HorizontalTabCompactMode,
 	totalChips: number,
 	isSelected: boolean,
+	overflowed?: boolean,
 ): boolean {
 	if (isSelected || mode === 'off') return false;
-	return mode === 'inactive' || totalChips > 5;
+	if (mode === 'inactive') return true;
+	return overflowed ?? totalChips > 5;
 }
 
 export function indexGroupMembers<T>(members: readonly T[], groupOf: (member: T) => string): Map<string, T[]> {

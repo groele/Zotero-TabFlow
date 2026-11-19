@@ -62,6 +62,7 @@ export interface TabSessionSnapshot {
 	ungroupedColor?: string;
 	ungroupedHeadingHidden?: boolean;
 	kind?: SessionSnapshotKind;
+	scopedGroupId?: string;
 }
 
 export interface TabFlowState {

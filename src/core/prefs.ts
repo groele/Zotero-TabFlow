@@ -48,7 +48,7 @@ export interface TabFlowPrefs {
 
 export const DEFAULT_PREFS: TabFlowPrefs = {
 	enableHorizontalGroups: true,
-	horizontalTabCompactMode: 'inactive',
+	horizontalTabCompactMode: 'auto',
 	enableGroupHiding: true,
 	compactTopBar: false,
 	enableVerticalSidebar: true,

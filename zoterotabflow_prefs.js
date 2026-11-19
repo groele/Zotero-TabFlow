@@ -29,7 +29,7 @@
   var PREF_PREFIX = "extensions.zotero.tabflow.";
   var DEFAULT_PREFS = {
     enableHorizontalGroups: true,
-    horizontalTabCompactMode: "inactive",
+    horizontalTabCompactMode: "auto",
     enableGroupHiding: true,
     compactTopBar: false,
     enableVerticalSidebar: true,

@@ -23,9 +23,10 @@ export class HorizontalBarController {
 	private toolbarActions: HTMLDivElement | null = null;
 	private readonly toolbar = new ToolbarActions();
 	private drag: HorizontalDragController;
-	private lastSelectedID = '';
-	private groupSections = new Map<string, GroupSection>();
 	private addGroupButton: HTMLButtonElement | null = null;
+	private lastSelectedID = '';
+	private layoutRetry = false;
+	private groupSections = new Map<string, GroupSection>();
 
 	constructor(
 		private readonly win: Window,
@@ -145,6 +146,10 @@ export class HorizontalBarController {
 		const collapsedIds = new Set(this.store.state.collapsed);
 		const compactPref = getPref('horizontalTabCompactMode');
 		const totalInlineChips = tracked.filter((t) => !t.pinned).length + virtualMembers.filter((m) => visibleGroupIds.has(this.store.groupOfKey(m.key))).length;
+		const measureAuto = compactPref === 'auto' && this.root.clientWidth > 0;
+		const autoCandidates: Array<{ node: HTMLElement; label: HTMLElement }> = [];
+		const preCollapse = (isSelected: boolean) =>
+			measureAuto ? false : shouldCollapseHorizontalChip(compactPref, totalInlineChips, isSelected);
 		const groups = rawGroups.filter((g) => {
 			const hasMembers = unpinned.has(g.id);
 			const hasVirtuals = virtualsByGroup.has(g.id);
@@ -175,14 +180,21 @@ export class HorizontalBarController {
 
 			if (!collapsed) {
 				const nodes = this.doc.createDocumentFragment();
-				for (const t of members) nodes.append(this.buildTabNode(t, selectedID, shouldCollapseHorizontalChip(compactPref, totalInlineChips, t.tab.id === selectedID)));
-				const collapseVirtual = shouldCollapseHorizontalChip(compactPref, totalInlineChips, false);
+				for (const t of members) {
+					const selected = t.tab.id === selectedID;
+					const chip = this.buildTabNode(t, selectedID, preCollapse(selected));
+					const lbl = measureAuto && !selected ? chip.querySelector('.ztf-doc-title') as HTMLElement | null : null;
+					if (lbl) autoCandidates.push({ node: chip, label: lbl });
+					nodes.append(chip);
+				}
+				const collapseVirtual = preCollapse(false);
 				for (const v of virtuals) {
 					const vNode = this.h('button', `ztf-doc ztf-virtual${collapseVirtual ? ' ztf-chip-collapsed' : ''}`);
 					vNode.type = 'button';
 					const label = this.h('span', 'ztf-doc-title');
 					label.textContent = collapseVirtual ? '···' : `◌ ${this.meta.getDisplayTitle(v)}`;
 					vNode.append(label);
+					if (measureAuto) autoCandidates.push({ node: vNode, label });
 					vNode.setAttribute('aria-label', v.title);
 					vNode.title = t('zotero-tabflow-virtual-reload-tip', `虚拟保留成员（点击重新加载）：${v.title}`, { title: v.title });
 					vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id, false, v.key).then((opened) => {
@@ -209,6 +221,11 @@ export class HorizontalBarController {
 			this.addGroupButton = addBtn;
 		}
 		reconcileGroupSections(this.root, this.groupSections, groups.map((g) => g.id), this.addGroupButton);
+		if (measureAuto && autoCandidates.length && this.root.scrollWidth > this.root.clientWidth + 2) {
+			for (const item of autoCandidates) { item.node.classList.add('ztf-chip-collapsed'); item.label.textContent = '···'; }
+		} else if (compactPref === 'auto' && this.root.clientWidth === 0 && !this.layoutRetry && typeof this.win?.requestAnimationFrame === 'function') {
+			this.layoutRetry = true; this.win.requestAnimationFrame(() => { this.layoutRetry = false; this.render(); });
+		}
 		this.root.scrollLeft = scroll;
 		if (selectedID && selectedID !== this.lastSelectedID) {
 			this.lastSelectedID = selectedID;
@@ -257,10 +274,7 @@ export class HorizontalBarController {
 		closeBtn.type = 'button';
 		closeBtn.setAttribute('aria-label', t('zotero-tabflow-close-tab-aria', `关闭标签：${tab.title}`, { title: tab.title }));
 		closeBtn.append(createSvgIcon(this.doc, 'close', 11));
-		closeBtn.onclick = (e) => {
-			e.stopPropagation();
-			void this.actions.closeTab(tab.tab.id, true).then(this.onRefresh);
-		};
+		closeBtn.onclick = (e) => { e.stopPropagation(); void this.actions.closeTab(tab.tab.id, true).then(this.onRefresh); };
 		node.append(label, closeBtn);
 		node.onclick = () => { this.hoverCard?.hide(); this.actions.selectTab(tab.tab.id); };
 		node.onmouseenter = () => this.hoverCard?.scheduleShow(() => this.hoverCard?.show(node, tab, 'below'));
@@ -272,8 +286,9 @@ export class HorizontalBarController {
 				void this.actions.closeTab(tab.tab.id, true).then(this.onRefresh);
 			}
 		};
-		node.oncontextmenu = (e: Event) => this.menus.openTabMenu(e as MouseEvent, tab);
+		node.oncontextmenu = (e: Event) => { this.hoverCard?.hide(); this.menus.openTabMenu(e as MouseEvent, tab); };
 		this.drag.bindTabDrag(node, tab);
+		node.addEventListener('dragstart', () => this.hoverCard?.hide());
 		return node;
 	}
 
@@ -337,9 +352,6 @@ export class HorizontalBarController {
 		this.root?.remove();
 		this.pinnedStrip?.remove();
 		this.toolbarActions?.remove();
-		this.root = null;
-		this.addGroupButton = null;
-		this.pinnedStrip = null;
-		this.toolbarActions = null;
+		this.root = null; this.addGroupButton = null; this.pinnedStrip = null; this.toolbarActions = null;
 	}
 }

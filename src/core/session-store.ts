@@ -68,6 +68,35 @@ export function appendManualSession(state: TabFlowState, snap: TabSessionSnapsho
 	state.sessions = [snap, ...state.sessions].slice(0, MAX_MANUAL_SESSIONS);
 }
 
+export function stripSessionTimestamp(name: string): string {
+	return name.trim().replace(/\s*·\s*\d{2}:\d{2}$/, '').trim();
+}
+
+function isMatchingSession(s: TabSessionSnapshot, name: string, kind: SessionSnapshotKind): boolean {
+	const normKind = s.kind || 'manual';
+	if (normKind !== kind) return false;
+	const trimmed = name.trim();
+	if (s.name.trim() === trimmed) return true;
+	const base = stripSessionTimestamp(trimmed);
+	if (!base || ['工作区会话', 'Workspace Session', '布局模板', 'Layout Template'].includes(base)) return false;
+	return stripSessionTimestamp(s.name) === base;
+}
+
+export function findMatchingSessionIndex(state: TabFlowState, name: string, kind: SessionSnapshotKind = 'manual'): number {
+	const trimmed = name.trim();
+	const exact = state.sessions.findIndex((s) => (s.kind || 'manual') === kind && s.name.trim() === trimmed);
+	return exact >= 0 ? exact : state.sessions.findIndex((s) => isMatchingSession(s, trimmed, kind));
+}
+
+export function upsertManualSession(state: TabFlowState, snap: TabSessionSnapshot): TabSessionSnapshot {
+	const kind = snap.kind || 'manual';
+	const idx = findMatchingSessionIndex(state, snap.name, kind);
+	const next: TabSessionSnapshot = idx >= 0 ? { ...snap, id: state.sessions[idx].id } : snap;
+	const rest = idx >= 0 ? state.sessions.filter((s) => !isMatchingSession(s, snap.name, kind)) : state.sessions;
+	state.sessions = [next, ...rest].slice(0, MAX_MANUAL_SESSIONS);
+	return next;
+}
+
 export function appendRollingSnapshot(state: TabFlowState, snap: TabSessionSnapshot): boolean {
 	const current = state.rollingSessions ?? [];
 	if (current[0] && sessionLayoutFingerprint(current[0]) === sessionLayoutFingerprint(snap)) {
@@ -187,6 +216,7 @@ export function buildGroupSessionSnapshot(
 		collapsed: [],
 		remarks,
 		kind: 'manual',
+		scopedGroupId: groupId,
 	};
 }
 
@@ -194,8 +224,10 @@ export function updateExistingSession(state: TabFlowState, id: string, openKeys:
 	const idx = state.sessions.findIndex((s) => s.id === id);
 	if (idx < 0) return null;
 	const current = state.sessions[idx];
-	const next = buildSessionSnapshot(state, current.name, openKeys, current.kind === 'template' ? 'template' : 'manual');
-	const updated: TabSessionSnapshot = { ...next, id: current.id, name: current.name };
+	const next = current.scopedGroupId !== undefined
+		? buildGroupSessionSnapshot(state, current.name, current.scopedGroupId, openKeys)
+		: buildSessionSnapshot(state, current.name, openKeys, current.kind === 'template' ? 'template' : 'manual');
+	const updated: TabSessionSnapshot = { ...next, id: current.id, name: current.name, scopedGroupId: current.scopedGroupId };
 	state.sessions[idx] = updated;
 	return updated;
 }
