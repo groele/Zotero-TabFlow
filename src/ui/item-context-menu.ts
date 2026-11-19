@@ -61,14 +61,18 @@ export class ItemContextMenuController {
 		this.itemSubPopup.textContent = '';
 		const selected: any[] = (this.win as any).ZoteroPane?.getSelectedItems?.() || [];
 		this.item(this.itemSubPopup, t('zotero-tabflow-item-open-new-group', '打开到新分组…'), () => {
-			const fallback = selected[0]?.getField?.('title')?.slice(0, 30) || t('zotero-tabflow-new-group-title', '新分组');
-			const val = { value: fallback };
-			if (!Services.prompt.prompt(this.win, t('zotero-tabflow-item-open-new-group', '打开到新分组'), t('zotero-tabflow-new-group-prompt', '分组名称：'), val, null, {}) || !val.value.trim()) return;
-			const g = this.store.ensureGroup(val.value);
-			void (async () => {
-				for (const it of selected) await this.actions.openVirtualOrItem(it.id, g.id);
-				this.onRefresh();
-			})();
+			const openDialog = () => {
+				const fallback = selected[0]?.getField?.('title')?.slice(0, 30) || t('zotero-tabflow-new-group-title', '新分组');
+				const val = { value: fallback };
+				if (!Services.prompt.prompt(this.win, t('zotero-tabflow-item-open-new-group', '打开到新分组'), t('zotero-tabflow-new-group-prompt', '分组名称：'), val, null, {}) || !val.value.trim()) return;
+				const g = this.store.ensureGroup(val.value);
+				void (async () => {
+					for (const it of selected) await this.actions.openVirtualOrItem(it.id, g.id);
+					this.onRefresh();
+				})();
+			};
+			if (typeof this.win?.setTimeout === 'function') this.win.setTimeout(openDialog, 0);
+			else openDialog();
 		});
 		const groups = this.store.visibleGroups().filter((group) => group.id);
 		if (groups.length) this.itemSubPopup.append(this.xul('menuseparator'));

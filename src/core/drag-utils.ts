@@ -11,6 +11,18 @@ export function computeNativeTabMoveTarget(
 	return Math.max(1, to + (after ? 1 : 0));
 }
 
+export function hasZoteroDraggedItems(
+	dt: { types?: Iterable<string> | { contains?: (type: string) => boolean }; getData?: (type: string) => string } | null | undefined,
+): boolean {
+	if (!dt) return false;
+	const types = dt.types as { contains?: (type: string) => boolean; [Symbol.iterator]?: () => Iterator<string> } | undefined;
+	if (types && typeof types.contains === 'function' && types.contains('zotero/item')) return true;
+	if (types && typeof (types as Iterable<string>)[Symbol.iterator] === 'function') {
+		return Array.from(types as Iterable<string>).includes('zotero/item');
+	}
+	return parseZoteroDraggedItemIDs(dt).length > 0;
+}
+
 export function parseZoteroDraggedItemIDs(dt: { getData?: (type: string) => string } | null | undefined): number[] {
 	if (!dt?.getData) return [];
 	const raw = dt.getData('zotero/item') || '';

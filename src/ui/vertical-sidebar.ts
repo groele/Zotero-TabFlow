@@ -1,4 +1,4 @@
-import { parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
+import { hasZoteroDraggedItems, parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
 import { t } from '../core/i18n.ts';
 import { getPref, setPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
@@ -27,6 +27,7 @@ export class VerticalSidebarController {
 	private draggedTabId: string | null = null;
 	private groupSections = new Map<string, GroupSection>();
 	private collapsedSections = new Set<string>();
+	private stopResize: (() => void) | null = null;
 
 	constructor(
 		private readonly win: Window,
@@ -74,7 +75,7 @@ export class VerticalSidebarController {
 		headerActions.append(
 			mkBtn('plus', 13, t('zotero-tabflow-sidebar-new-group', '新建分组'), () => {
 				const input = { value: '' };
-				if (!Services.prompt.prompt(null, t('zotero-tabflow-new-group-title', '新建标签分组'), t('zotero-tabflow-new-group-prompt', '请输入新分组名称：'), input, null, {})) return;
+				if (!Services.prompt.prompt(this.win, t('zotero-tabflow-new-group-title', '新建标签分组'), t('zotero-tabflow-new-group-prompt', '请输入新分组名称：'), input, null, {})) return;
 				this.store.ensureGroup(input.value);
 				this.viewMode = 'groups';
 				this.onRefresh();
@@ -120,6 +121,7 @@ export class VerticalSidebarController {
 		}
 
 		const list = this.h('div', 'ztf-sb-list ztf-sb-hide-collapsed');
+		list.addEventListener('scroll', () => this.hoverCard.hide(), { passive: true });
 		const statusBar = this.h('div', 'ztf-sb-status-bar ztf-sb-hide-collapsed');
 		const resizer = this.h('div', 'ztf-sb-resizer ztf-sb-hide-collapsed');
 		this.bindResizer(resizer, aside);
@@ -145,18 +147,19 @@ export class VerticalSidebarController {
 			const me = e as MouseEvent;
 			if (me.button !== 0 || aside.classList.contains('collapsed')) return;
 			me.preventDefault();
+			this.stopResize?.();
 			resizer.classList.add('active');
 			const startX = me.clientX;
 			const startWidth = aside.getBoundingClientRect().width;
-			const onMove = (ev: MouseEvent) => {
-				aside.style.setProperty('--ztf-sb-width', `${Math.min(440, Math.max(200, Math.round(startWidth + ev.clientX - startX)))}px`);
-			};
-			const onUp = () => {
+			const onMove = (ev: MouseEvent) => aside.style.setProperty('--ztf-sb-width', `${Math.min(440, Math.max(200, Math.round(startWidth + ev.clientX - startX)))}px`);
+			const cleanup = () => {
 				resizer.classList.remove('active');
 				this.win.removeEventListener('mousemove', onMove, true);
 				this.win.removeEventListener('mouseup', onUp, true);
-				setPref('verticalSidebarWidth', Math.round(aside.getBoundingClientRect().width));
+				this.stopResize = null;
 			};
+			const onUp = () => { cleanup(); setPref('verticalSidebarWidth', Math.round(aside.getBoundingClientRect().width)); };
+			this.stopResize = cleanup;
 			this.win.addEventListener('mousemove', onMove, true);
 			this.win.addEventListener('mouseup', onUp, true);
 		};
@@ -205,8 +208,6 @@ export class VerticalSidebarController {
 			? Object.values(this.store.state.virtualMembers).filter((m) => !openKeys.has(m.key) && visibleGroupIds.has(this.store.groupOfKey(m.key)))
 			: [];
 		const matchingVirtuals = virtualList.filter((m) => !q || `${m.title} ${m.shortTitle} ${m.collection}`.toLowerCase().includes(q));
-		let renderedGroupsCount = 1;
-
 		if (this.viewMode === 'groups') {
 			if (!this.groupSections.size) this.listEl.replaceChildren();
 			const tabsByGroup = indexGroupMembers(allTracked, (tab) => tab.groupId);
@@ -218,7 +219,6 @@ export class VerticalSidebarController {
 				const hasCustomHeading = !this.store.state.ungroupedHeadingHidden && Boolean(this.store.state.ungroupedName);
 				return shouldRenderGroupHeading(g.id, hasOpenMembers, hasVirtualMembers, hasCustomHeading);
 			});
-			renderedGroupsCount = renderedGroups.length;
 			for (const g of renderedGroups) {
 				const members = tabsByGroup.get(g.id) ?? [];
 				const virtuals = virtualsByGroup.get(g.id) ?? [];
@@ -267,7 +267,7 @@ export class VerticalSidebarController {
 
 		const noMatches = Boolean(q) && !allTracked.length && (!matchingVirtuals.length || this.viewMode !== 'groups');
 		const noNonGroupRows = this.viewMode !== 'groups' && !allTracked.length;
-		const brandNewEmpty = !q && this.viewMode === 'groups' && !allTracked.length && !virtualList.length && renderedGroupsCount <= 1;
+		const brandNewEmpty = !q && this.viewMode === 'groups' && !allTracked.length && !virtualList.length && !groups.some((g) => Boolean(g.id));
 		if (noMatches || noNonGroupRows || brandNewEmpty) {
 			this.clearGroupSections();
 			this.listEl.replaceChildren();
@@ -318,7 +318,7 @@ export class VerticalSidebarController {
 		section.heading.dataset.ztfNavId = id;
 		section.heading.prepend(this.h('span', 'ztf-sb-dot'));
 		section.heading.ondragover = (e: Event) => {
-			if (this.draggedKey || parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer).length) e.preventDefault();
+			if (this.draggedKey || hasZoteroDraggedItems((e as DragEvent).dataTransfer)) e.preventDefault();
 		};
 		section.heading.ondrop = (e: Event) => {
 			e.preventDefault();
@@ -347,6 +347,7 @@ export class VerticalSidebarController {
 	}
 
 	dispose(): void {
+		this.stopResize?.();
 		this.clearGroupSections();
 		this.hoverCard.dispose();
 		this.sidebar?.remove();

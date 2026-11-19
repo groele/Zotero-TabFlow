@@ -7,6 +7,7 @@ import type { TabActionService } from '../services/tab-actions.ts';
 
 export class TabContextMenuController {
 	private popups = new Set<Element>();
+	private disposed = false;
 
 	constructor(
 		private readonly win: Window,
@@ -16,6 +17,12 @@ export class TabContextMenuController {
 		private readonly actions: TabActionService,
 		private readonly onRefresh: () => void,
 	) {}
+
+	private defer(fn: () => void): void {
+		const run = () => { if (!this.disposed) fn(); };
+		if (typeof this.win?.setTimeout === 'function') this.win.setTimeout(run, 0);
+		else run();
+	}
 
 	private xul(tag: string): any {
 		return (this.doc as any).createXULElement
@@ -64,11 +71,13 @@ export class TabContextMenuController {
 			if (getPref('enableTabRemarks')) {
 				const remark = this.store.getRemark(tracked.key);
 				this.item(popup, remark.note ? `✎ ${t('zotero-tabflow-menu-edit-remark', '编辑标签备注…')}` : `✎ ${t('zotero-tabflow-menu-set-remark', '设置标签备注…')}`, () => {
-					const val = { value: remark.note };
-					if (Services.prompt.prompt(this.win, t('zotero-tabflow-menu-set-remark', '设置标签备注'), t('zotero-tabflow-remark-prompt', '输入备注（≤300 字，不改原文件名）：'), val, null, {})) {
-						this.store.setRemark(tracked.key, val.value);
-						this.onRefresh();
-					}
+					this.defer(() => {
+						const val = { value: remark.note };
+						if (Services.prompt.prompt(this.win, t('zotero-tabflow-menu-set-remark', '设置标签备注'), t('zotero-tabflow-remark-prompt', '输入备注（≤300 字，不改原文件名）：'), val, null, {})) {
+							this.store.setRemark(tracked.key, val.value);
+							this.onRefresh();
+						}
+					});
 				});
 				const dispMenu = this.xul('menu');
 				dispMenu.setAttribute('label', t('zotero-tabflow-menu-display-mode', '标签显示模式'));
@@ -100,12 +109,14 @@ export class TabContextMenuController {
 				this.item(groupPop, g.name, () => { this.store.assignKey(tracked.key, g.id); this.onRefresh(); }, { type: 'checkbox', checked: tracked.groupId === g.id });
 			}
 			this.item(groupPop, t('zotero-tabflow-menu-new-group-join', '新建分组并加入…'), () => {
-				const val = { value: '' };
-				if (Services.prompt.prompt(this.win, t('zotero-tabflow-new-group-title', '新建分组'), t('zotero-tabflow-new-group-prompt', '分组名称：'), val, null, {}) && val.value.trim()) {
-					const g = this.store.ensureGroup(val.value);
-					this.store.assignKey(tracked.key, g.id);
-					this.onRefresh();
-				}
+				this.defer(() => {
+					const val = { value: '' };
+					if (Services.prompt.prompt(this.win, t('zotero-tabflow-new-group-title', '新建分组'), t('zotero-tabflow-new-group-prompt', '分组名称：'), val, null, {}) && val.value.trim()) {
+						const g = this.store.ensureGroup(val.value);
+						this.store.assignKey(tracked.key, g.id);
+						this.onRefresh();
+					}
+				});
 			});
 			this.item(groupPop, t('zotero-tabflow-menu-remove-group', '移出分组'), () => { this.store.assignKey(tracked.key, ''); this.onRefresh(); }, { disabled: !tracked.groupId });
 
@@ -129,11 +140,13 @@ export class TabContextMenuController {
 		event.stopPropagation();
 		this.openAt(event, (popup) => {
 			this.item(popup, `${t('zotero-tabflow-rename-group-title', '重命名分组')}…`, () => {
-				const val = { value: group.name };
-				if (Services.prompt.prompt(this.win, t('zotero-tabflow-rename-group-title', '重命名分组'), t('zotero-tabflow-rename-group-prompt', '分组名称：'), val, null, {}) && val.value.trim()) {
-					this.store.renameGroup(group.id, val.value);
-					this.onRefresh();
-				}
+				this.defer(() => {
+					const val = { value: group.name };
+					if (Services.prompt.prompt(this.win, t('zotero-tabflow-rename-group-title', '重命名分组'), t('zotero-tabflow-rename-group-prompt', '分组名称：'), val, null, {}) && val.value.trim()) {
+						this.store.renameGroup(group.id, val.value);
+						this.onRefresh();
+					}
+				});
 			});
 			const virtualMembers = Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === group.id);
 			if (!group.id) {
@@ -143,19 +156,21 @@ export class TabContextMenuController {
 					this.item(popup, t('zotero-tabflow-hide-ungrouped', '隐藏当前未分组文献'), () => this.actions.hideGroup(''));
 				}
 				this.item(popup, t('zotero-tabflow-menu-convert-ungrouped', `将未分组文献转为新分组… (${ungrouped.length})`, { count: ungrouped.length }), () => {
-					const val = { value: '' };
-					if (Services.prompt.prompt(this.win, t('zotero-tabflow-new-group-title', '新建分组'), t('zotero-tabflow-new-group-prompt', '分组名称：'), val, null, {}) && val.value.trim()) {
-						const g = this.store.ensureGroup(val.value);
-						for (const item of ungrouped) this.store.assignKey(item.key, g.id);
-						this.onRefresh();
-					}
+					this.defer(() => {
+						const val = { value: '' };
+						if (Services.prompt.prompt(this.win, t('zotero-tabflow-new-group-title', '新建分组'), t('zotero-tabflow-new-group-prompt', '分组名称：'), val, null, {}) && val.value.trim()) {
+							const g = this.store.ensureGroup(val.value);
+							for (const item of ungrouped) this.store.assignKey(item.key, g.id);
+							this.onRefresh();
+						}
+					});
 				}, { disabled: !ungrouped.length });
 			} else {
 				if (getPref('enableGroupHiding')) {
 					this.item(popup, t('zotero-tabflow-hide-group', '隐藏分组'), () => this.actions.hideGroup(group.id));
 				}
 			}
-			this.item(popup, t('zotero-tabflow-dissolve-group', '解散此分组'), () => this.confirmDissolve(group));
+			this.item(popup, t('zotero-tabflow-dissolve-group', '解散此分组'), () => this.defer(() => this.confirmDissolve(group)));
 			const colorMenu = this.xul('menu');
 			colorMenu.setAttribute('label', t('zotero-tabflow-menu-group-color', '分组颜色'));
 			const colorPop = this.xul('menupopup');
@@ -165,17 +180,19 @@ export class TabContextMenuController {
 				this.item(colorPop, `${label} (${hex})`, () => { this.store.setGroupColor(group.id, hex); this.onRefresh(); });
 			}
 			this.item(colorPop, t('zotero-tabflow-menu-custom-color', '自定义 Hex 颜色…'), () => {
-				const val = { value: group.color };
-				if (Services.prompt.prompt(this.win, t('zotero-tabflow-menu-custom-color', '自定义颜色'), t('zotero-tabflow-custom-color-prompt', '输入 3 位或 6 位 Hex 颜色：'), val, null, {})) {
-					this.store.setGroupColor(group.id, val.value);
-					this.onRefresh();
-				}
+				this.defer(() => {
+					const val = { value: group.color };
+					if (Services.prompt.prompt(this.win, t('zotero-tabflow-menu-custom-color', '自定义颜色'), t('zotero-tabflow-custom-color-prompt', '输入 3 位或 6 位 Hex 颜色：'), val, null, {})) {
+						this.store.setGroupColor(group.id, val.value);
+						this.onRefresh();
+					}
+				});
 			});
 			popup.append(this.xul('menuseparator'));
 			if (virtualMembers.length) {
 				this.item(popup, `▶ ${t('zotero-tabflow-menu-open-virtual-all', `打开组内全部虚拟文献 (${virtualMembers.length})`, { count: virtualMembers.length })}`, () => {
 					void (async () => {
-						for (const m of virtualMembers) await this.actions.openVirtualOrItem(m.itemID, group.id);
+						for (const m of virtualMembers) await this.actions.openVirtualOrItem(m.itemID, group.id, false, m.key);
 						this.onRefresh();
 					})();
 				});
@@ -196,7 +213,12 @@ export class TabContextMenuController {
 		event.stopPropagation();
 		this.openAt(event, (popup) => {
 			if (!groupId) this.addUngroupedHeadingRestore(popup);
-			this.item(popup, `▶ ${t('zotero-tabflow-menu-load-virtual', '加载标签页')}`, () => void this.actions.openVirtualOrItem(member.itemID, groupId).then(this.onRefresh));
+			this.item(popup, `▶ ${t('zotero-tabflow-menu-load-virtual', '加载标签页')}`, () => {
+				void this.actions.openVirtualOrItem(member.itemID, groupId, false, member.key).then((opened) => {
+					if (!opened) Services.prompt.alert(this.win, member.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。'));
+					this.onRefresh();
+				});
+			});
 			this.item(popup, t('zotero-tabflow-menu-remove-virtual', '从分组移除虚拟成员'), () => {
 				this.store.removeVirtualMember(member.key);
 				this.store.assignKey(member.key, '');
@@ -230,6 +252,7 @@ export class TabContextMenuController {
 	}
 
 	dispose(): void {
+		this.disposed = true;
 		for (const p of this.popups) { (p as any).hidePopup?.(); p.remove(); }
 		this.popups.clear();
 	}

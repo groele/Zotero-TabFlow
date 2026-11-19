@@ -1,4 +1,4 @@
-import { parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
+import { hasZoteroDraggedItems, parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
 import { t } from '../core/i18n.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { TrackedTab } from '../core/types.ts';
@@ -69,8 +69,7 @@ export class HorizontalDragController {
 			(e as DragEvent).dataTransfer?.setData('application/x-zotero-tabflow-group', groupId || 'ungrouped');
 		};
 		heading.ondragover = (e: Event) => {
-			const extItems = parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer);
-			if (!this.draggedKey && this.draggedGroupId === null && !extItems.length) return;
+			if (!this.draggedKey && this.draggedGroupId === null && !hasZoteroDraggedItems((e as DragEvent).dataTransfer)) return;
 			e.preventDefault();
 			if (this.draggedKey && collapsed && this.hoverTimer === null) {
 				this.hoverTimer = this.win.setTimeout(() => {

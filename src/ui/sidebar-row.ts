@@ -1,4 +1,4 @@
-import { parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
+import { hasZoteroDraggedItems, parseZoteroDraggedItemIDs } from '../core/drag-utils.ts';
 import { t } from '../core/i18n.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { TrackedTab, VirtualMemberMeta } from '../core/types.ts';
@@ -42,7 +42,10 @@ export function buildSidebarVirtualRow(deps: SidebarRowDeps, v: VirtualMemberMet
 	ttl.textContent = deps.meta.getDisplayTitle(v);
 	txt.append(ttl);
 	row.append(ic, txt);
-	row.onclick = () => void deps.actions.openVirtualOrItem(v.itemID, groupId).then(deps.onRefresh);
+	row.onclick = () => void deps.actions.openVirtualOrItem(v.itemID, groupId, false, v.key).then((opened) => {
+		if (!opened) Services.prompt.alert(deps.doc.defaultView ?? null, v.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。'));
+		deps.onRefresh();
+	});
 	row.oncontextmenu = (e: Event) => deps.menus.openVirtualMenu(e as MouseEvent, v, groupId);
 	return row;
 }
@@ -95,10 +98,10 @@ export function buildSidebarTabRow(deps: SidebarRowDeps, item: TrackedTab, selec
 	};
 	row.ondragover = (e: Event) => {
 		const dragged = deps.getDraggedKey();
-		const extIds = !dragged ? parseZoteroDraggedItemIDs((e as DragEvent).dataTransfer) : [];
-		if ((!dragged || dragged === item.key) && !extIds.length) return;
+		const hasExt = !dragged && hasZoteroDraggedItems((e as DragEvent).dataTransfer);
+		if ((!dragged || dragged === item.key) && !hasExt) return;
 		e.preventDefault();
-		if (extIds.length) {
+		if (hasExt) {
 			row.setAttribute('data-ztf-drop', 'join');
 			return;
 		}

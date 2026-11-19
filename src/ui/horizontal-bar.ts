@@ -106,7 +106,7 @@ export class HorizontalBarController {
 		if (!host) return;
 		this.mount();
 		const sidebarHealthy = getPref('enableVerticalSidebar') && !getPref('verticalSidebarCollapsed') && Boolean(this.doc.getElementById('ztf-sidebar')?.isConnected);
-		const compactMode = getPref('compactTopBar') && sidebarHealthy;
+		const compactMode = getPref('enableHorizontalGroups') && getPref('compactTopBar') && sidebarHealthy;
 		const enabled = getPref('enableHorizontalGroups') && !compactMode;
 		const mounted = enabled && Boolean(this.root?.isConnected);
 		host.toggleAttribute('data-ztf-inline', mounted || compactMode);
@@ -178,7 +178,10 @@ export class HorizontalBarController {
 					label.textContent = `◌ ${this.meta.getDisplayTitle(v)}`;
 					vNode.append(label);
 					vNode.title = t('zotero-tabflow-virtual-reload-tip', `虚拟保留成员（点击重新加载）：${v.title}`, { title: v.title });
-					vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id).then(this.onRefresh);
+					vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id, false, v.key).then((opened) => {
+						if (!opened) Services.prompt.alert(this.win, v.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。'));
+						this.onRefresh();
+					});
 					vNode.oncontextmenu = (e: Event) => this.menus.openVirtualMenu(e as MouseEvent, v, g.id);
 					nodes.append(vNode);
 				}

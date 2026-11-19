@@ -181,8 +181,8 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
   display: flex; align-items: center; justify-content: space-between; height: 34px; padding: 0 8px 0 10px;
   border-bottom: 1px solid var(--ztf-border); font-size: 12px; font-weight: 600;
 }
-.ztf-sb-title { display: inline-flex; align-items: center; gap: 6px; color: var(--ztf-text); }
-.ztf-sb-header-actions { display: inline-flex; align-items: center; gap: 2px; }
+.ztf-sb-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ztf-text); }
+.ztf-sb-header-actions { display: inline-flex; align-items: center; gap: 2px; flex: none; }
 .ztf-sb-icon-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
   border: 0; background: transparent; color: var(--ztf-muted); cursor: pointer; border-radius: 5px;
@@ -268,9 +268,9 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
   background: var(--ztf-card); color: var(--ztf-text); border: 1px solid var(--ztf-border);
   box-shadow: 0 8px 24px rgba(0,0,0,0.16); pointer-events: none; font: 12px/1.5 system-ui, sans-serif;
 }
-.ztf-hc-title { font-weight: 600; margin-bottom: 3px; line-height: 1.4; }
-.ztf-hc-meta { color: var(--ztf-muted); font-size: 11px; }
-.ztf-hc-note { margin-top: 5px; padding: 4px 7px; border-radius: 5px; background: var(--ztf-accent-soft); color: var(--ztf-accent); font-size: 11px; }
+.ztf-hc-title { font-weight: 600; margin-bottom: 3px; line-height: 1.4; overflow-wrap: anywhere; }
+.ztf-hc-meta { color: var(--ztf-muted); font-size: 11px; overflow-wrap: anywhere; }
+.ztf-hc-note { margin-top: 5px; padding: 4px 7px; border-radius: 5px; background: var(--ztf-accent-soft); color: var(--ztf-accent); font-size: 11px; overflow-wrap: anywhere; }
 
 /* Spotlight Command Palette */
 .ztf-spot-box { width: 540px; max-width: calc(100vw - 32px); padding: 10px; font: 13px system-ui, sans-serif; color: var(--ztf-text); }

@@ -90,7 +90,8 @@ export class SpotlightController {
 		if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p') {
 			e.preventDefault();
 			e.stopPropagation();
-			this.open();
+			if (this.panel?.state === 'open') this.close();
+			else this.open();
 		}
 	};
 
@@ -180,6 +181,21 @@ export class SpotlightController {
 			});
 
 		const openKeys = new Set(tabs.map((tab) => tab.key));
+		const visibleVirtuals: SpotEntry[] = (q.startsWith('>') && !tabsMode) || libMode || tabsMode || !getPref('enableVirtualMembers') ? []
+			: Object.values(this.store.state.virtualMembers).flatMap((m) => {
+				const gid = this.store.groupOfKey(m.key);
+				if (openKeys.has(m.key) || hiddenIds.has(gid) || !matches(`${this.store.getRemark(m.key).note} ${m.title} ${m.shortTitle} ${m.filename} ${m.collection} ${m.creatorYear} ${names.get(gid) ?? ''}`)) return [];
+				const r = getPref('enableTabRemarks') ? this.store.getRemark(m.key).note : '';
+				return [{
+					label: `◌ ${r || m.title}`,
+					hint: `${names.get(gid) || t('zotero-tabflow-ungrouped', '未分组')} · ${t('zotero-tabflow-spot-virtual-hint', '虚拟保留')}`,
+					run: () => void this.actions.openVirtualOrItem(m.itemID, gid, false, m.key).then((opened) => {
+						if (!opened) Services.prompt.alert(this.win, m.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。'));
+						this.onRefresh();
+					}),
+				}];
+			});
+		const allTabEntries = [...tabEntries, ...visibleVirtuals];
 		const openItemIds = new Set(tabs.flatMap((tab) => [tab.itemID, tab.parentItemID]));
 		const libraryEntries: SpotEntry[] = !libMode || !terms.length ? [] : this.libraryCache
 			.filter((it) => !openKeys.has(it.fullKey) && !openItemIds.has(it.id) && matches(it.searchText))
@@ -212,13 +228,13 @@ export class SpotlightController {
 			})),
 			...(!tabsMode && getPref('enableVirtualMembers') ? Object.values(this.store.state.virtualMembers).flatMap((member) => {
 				const groupId = this.store.groupOfKey(member.key);
-				if (openKeys.has(member.key) || !hiddenIds.has(groupId) || !matches(`${member.title} ${member.shortTitle} ${names.get(groupId)}`)) return [];
+				if (openKeys.has(member.key) || !hiddenIds.has(groupId) || !matches(`${this.store.getRemark(member.key).note} ${member.title} ${member.shortTitle} ${member.filename} ${member.collection} ${names.get(groupId)}`)) return [];
 				return [{
 					groupId,
-					label: member.title,
+					label: (getPref('enableTabRemarks') ? this.store.getRemark(member.key).note : '') || member.title,
 					hint: `${names.get(groupId)} · ${t('zotero-tabflow-spot-hidden-open', '仅打开这篇文献')}`,
 					run: () => {
-						void this.actions.openVirtualOrItem(member.itemID).then((opened) => {
+						void this.actions.openVirtualOrItem(member.itemID, undefined, false, member.key).then((opened) => {
 							if (!opened) Services.prompt.alert(this.win, member.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。'));
 							this.onRefresh();
 						});
@@ -280,7 +296,7 @@ export class SpotlightController {
 		].filter((c) => !terms.length || terms.every((term) => `${c.label} ${c.hint}`.toLowerCase().includes(term)));
 
 		const sections = [
-			[t('zotero-tabflow-spot-section-tabs', '打开的标签'), tabEntries],
+			[t('zotero-tabflow-spot-section-tabs', '打开的标签'), allTabEntries],
 			[t('zotero-tabflow-spot-section-library', '文库文献'), libraryEntries],
 			[t('zotero-tabflow-spot-section-hidden', '隐藏项目'), [...hiddenDocuments, ...hiddenEntries]],
 			[t('zotero-tabflow-spot-section-sessions', '会话与快照'), tabsMode ? [] : sessionEntries],

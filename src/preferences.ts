@@ -18,6 +18,11 @@ function syncMenulistLabels(doc: Document): void {
 	});
 }
 
+function scheduleMenulistSync(doc: Document): void {
+	syncMenulistLabels(doc);
+	void Promise.resolve().then(() => syncMenulistLabels(doc));
+}
+
 function updateDependencies(doc: Document): void {
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-compactTopBar'), !getPref('enableHorizontalGroups') || !getPref('enableVerticalSidebar'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-enableBatchSelection'), !getPref('enableVerticalSidebar'));
@@ -28,7 +33,7 @@ function updateDependencies(doc: Document): void {
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-autoSleepMinutes'), !getPref('enableTabSleep'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-staleSuggestDays'), !getPref('enableStaleSuggestions'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-tabContextActions'), !getPref('enableTabContextMenu'));
-	syncMenulistLabels(doc);
+	scheduleMenulistSync(doc);
 }
 
 const TabFlowPreferences = {
@@ -37,7 +42,7 @@ const TabFlowPreferences = {
 	init(win?: Window): void {
 		const doc = win?.document || document;
 		updateDependencies(doc);
-		(doc as { l10n?: { ready?: Promise<unknown> } }).l10n?.ready?.then?.(() => syncMenulistLabels(doc));
+		(doc as { l10n?: { ready?: Promise<unknown> } }).l10n?.ready?.then?.(() => scheduleMenulistSync(doc));
 
 		const pane = doc.getElementById('zotero-prefpane-zotero-tabflow');
 		pane?.addEventListener('command', () => updateDependencies(doc));
@@ -46,6 +51,7 @@ const TabFlowPreferences = {
 		doc.getElementById('tabflow-reset-prefs-btn')?.addEventListener('command', () => {
 			resetAllPrefs();
 			updateDependencies(doc);
+			(win || window).setTimeout?.(() => scheduleMenulistSync(doc), 0);
 		});
 
 		doc.getElementById('tabflow-clear-state-btn')?.addEventListener('command', () => {
@@ -56,8 +62,12 @@ const TabFlowPreferences = {
 		});
 
 		if (!this.observerIDs.length) {
-			this.observerIDs = ['enableHorizontalGroups', 'enableVerticalSidebar', 'enablePinnedTabs', 'enableCollectionAutoGroup', 'enableTabRemarks', 'enableSessions', 'enableTabSleep', 'enableStaleSuggestions', 'enableTabContextMenu']
-				.map((key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => updateDependencies(doc), true));
+			this.observerIDs = [
+				'enableHorizontalGroups', 'enableVerticalSidebar', 'enablePinnedTabs',
+				'enableCollectionAutoGroup', 'enableTabRemarks', 'enableSessions',
+				'enableTabSleep', 'enableStaleSuggestions', 'enableTabContextMenu',
+				'multiCollectionStrategy', 'remarkDisplayMode', 'verticalTabTitleMode', 'verticalTabSubtitleMode',
+			].map((key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => updateDependencies(doc), true));
 			(win || window).addEventListener('unload', () => {
 				for (const id of this.observerIDs) Zotero.Prefs.unregisterObserver(id);
 				this.observerIDs = [];

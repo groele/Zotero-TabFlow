@@ -69,7 +69,10 @@ export class ItemMetadataService {
 
 	plainTitle(value: string): string {
 		const render = (Zotero.Utilities as any)?.Internal?.renderItemTitle;
-		return typeof render === 'function' ? render.call((Zotero.Utilities as any).Internal, value) : value.replace(/<[^>]*>/g, '');
+		if (typeof render !== 'function') return value.replace(/<[^>]*>/g, '');
+		const rendered = render.call((Zotero.Utilities as any).Internal, value);
+		const text = typeof rendered === 'string' ? rendered : String(rendered?.textContent ?? value);
+		return text.replace(/<[^>]*>/g, '');
 	}
 
 	buildTrackedTabs(): TrackedTab[] {

@@ -108,11 +108,16 @@ export class PopoverController {
 				void this.actions.closeTabs(stale.map((s) => s.tracked.tab.id), { preserveVirtual: true, protectPinned: true, protectMedia: true }).then(this.onRefresh);
 			}, !stale.length);
 			this.item(popup, t('zotero-tabflow-stale-threshold', `设置天数阈值…（当前 ${threshold} 天）`, { days: threshold }), () => {
-				const val = { value: String(threshold) };
-				if (Services.prompt.prompt(this.win, t('zotero-tabflow-stale-btn', '建议关闭', { count: stale.length }), t('zotero-tabflow-stale-threshold-prompt', '多少天未查看后列入建议（1–3650）：'), val, null, {})) {
-					const num = Number(val.value);
-					if (Number.isInteger(num) && num >= 1 && num <= 3650) { setPref('staleSuggestDays', num); this.onRefresh(); }
-				}
+				const ask = () => {
+					if (this.disposed) return;
+					const val = { value: String(threshold) };
+					if (Services.prompt.prompt(this.win, t('zotero-tabflow-stale-btn', '建议关闭', { count: stale.length }), t('zotero-tabflow-stale-threshold-prompt', '多少天未查看后列入建议（1–3650）：'), val, null, {})) {
+						const num = Number(val.value);
+						if (Number.isInteger(num) && num >= 1 && num <= 3650) { setPref('staleSuggestDays', num); this.onRefresh(); }
+					}
+				};
+				if (typeof this.win?.setTimeout === 'function') this.win.setTimeout(ask, 0);
+				else ask();
 			});
 		});
 	}

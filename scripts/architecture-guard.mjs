@@ -78,6 +78,23 @@ test('Fluent catalogues are symmetric across en-US and zh-CN', () => {
 	assert.deepEqual(en.filter((k) => !zh.includes(k)), [], 'missing keys in zh-CN');
 });
 
+test('all Fluent keys referenced in src/ and prefs.xhtml exist in both catalogues', () => {
+	const zhKeys = new Set([...read('locale/zh-CN/zotero-tabflow.ftl').matchAll(/^([A-Za-z0-9_-]+)\s*=/gm)].map((m) => m[1]));
+	const enKeys = new Set([...read('locale/en-US/zotero-tabflow.ftl').matchAll(/^([A-Za-z0-9_-]+)\s*=/gm)].map((m) => m[1]));
+	const ignoredLiterals = new Set(['zotero-tabflow-session']);
+	const referenced = new Set();
+	for (const rel of ['prefs.xhtml', ...walk('src', ['.ts', '.tsx'])]) {
+		const content = read(rel);
+		for (const m of content.matchAll(/(?:data-l10n-id=["']|['"])(zotero-tabflow-[a-z0-9-]+)["']/g)) {
+			if (!ignoredLiterals.has(m[1])) referenced.add(m[1]);
+		}
+	}
+	const missingZh = [...referenced].filter((k) => !zhKeys.has(k));
+	const missingEn = [...referenced].filter((k) => !enKeys.has(k));
+	assert.deepEqual(missingZh, [], `Missing zh-CN FTL keys: ${missingZh.join(', ')}`);
+	assert.deepEqual(missingEn, [], `Missing en-US FTL keys: ${missingEn.join(', ')}`);
+});
+
 test('all XUL menuitems in prefs.xhtml expose Fluent .label attributes', () => {
 	const xhtml = read('prefs.xhtml');
 	const itemKeys = [...xhtml.matchAll(/<menuitem[^>]*data-l10n-id="([^"]+)"/g)].map((m) => m[1]);

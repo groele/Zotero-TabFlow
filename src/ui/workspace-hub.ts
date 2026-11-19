@@ -124,6 +124,7 @@ export class WorkspaceHubController {
 
 	renderContent(): void {
 		if (!this.bodyEl) return;
+		if (this.statusEl && this.store.readOnly) this.statusEl.textContent = t('zotero-tabflow-hub-readonly-warning', '工作区数据处于只读保护状态，暂不可保存或修改。');
 		const sessionsEnabled = getPref('enableSessions');
 		const hiddenGroups = this.store.hiddenGroups();
 		const sessions = this.store.state.sessions;
@@ -154,18 +155,19 @@ export class WorkspaceHubController {
 			input.value.trim() || `${t(fallbackKey, fallback)} · ${formatSnapshotTimestamp(Date.now())}`;
 
 		const actions = this.h('div', 'ztf-hub-quick-actions');
+		const ro = this.store.readOnly;
 		actions.append(
 			this.btn(t('zotero-tabflow-hub-save-session', '保存工作区'), 'ztf-hub-btn primary', () => {
 				const openKeys = this.meta.buildTrackedTabs().map((tab) => tab.key);
 				this.store.saveSession(saveName('zotero-tabflow-session-default-name', '工作区会话'), openKeys);
 				input.value = '';
 				this.renderContent();
-			}),
+			}, ro),
 			this.btn(t('zotero-tabflow-hub-save-template', '存为布局模板'), 'ztf-hub-btn', () => {
 				this.store.saveLayoutTemplate(saveName('zotero-tabflow-template-default-name', '布局模板'));
 				input.value = '';
 				this.renderContent();
-			}),
+			}, ro),
 			this.btn(t('zotero-tabflow-hub-export', '导出 JSON'), 'ztf-hub-btn', () => {
 				this.dispose();
 				this.callbacks.onExportSessions();
@@ -173,7 +175,7 @@ export class WorkspaceHubController {
 			this.btn(t('zotero-tabflow-hub-import', '导入 JSON'), 'ztf-hub-btn', () => {
 				this.dispose();
 				this.callbacks.onImportSessions();
-			}),
+			}, ro),
 		);
 		bar.append(input, actions);
 		return bar;
@@ -191,11 +193,12 @@ export class WorkspaceHubController {
 	private buildHiddenSection(hiddenGroups: readonly TabGroup[]): HTMLElement {
 		const sec = this.h('div', 'ztf-hub-section');
 		sec.id = 'ztf-hub-hidden-section';
+		const ro = this.store.readOnly;
 		const showAll = hiddenGroups.length > 1
 			? this.btn(t('zotero-tabflow-hub-show-all-hidden', '全部恢复显示'), 'ztf-hub-btn', () => {
 				for (const g of hiddenGroups) this.store.setGroupHidden(g.id, false);
 				this.refreshHiddenFocus(0);
-			})
+			}, ro)
 			: undefined;
 		const heading = this.buildSectionHeader(t('zotero-tabflow-hub-hidden-header', `已隐藏的项目组 (${hiddenGroups.length})`, { count: hiddenGroups.length }), showAll);
 		heading.tabIndex = -1;
@@ -227,7 +230,7 @@ export class WorkspaceHubController {
 				this.btn(t('zotero-tabflow-hub-unhide', '恢复显示'), 'ztf-hub-btn primary ztf-hub-restore', () => {
 					this.store.setGroupHidden(g.id, false);
 					this.refreshHiddenFocus(index);
-				}),
+				}, ro),
 			);
 			if (unopened.length) {
 				btns.append(this.btn(t('zotero-tabflow-hub-restore-reopen', `恢复并补开 ${unopened.length} 篇`, { count: unopened.length }), 'ztf-hub-btn', () => {
@@ -240,7 +243,7 @@ export class WorkspaceHubController {
 						const currentKeys = new Set(this.meta.buildTrackedTabs().map((tab) => tab.key));
 						for (const m of unopened) {
 							if (currentKeys.has(m.key)) continue;
-							if (await this.actions.openVirtualOrItem(m.itemID, undefined, true)) opened++;
+							if (await this.actions.openVirtualOrItem(m.itemID, undefined, true, m.key)) opened++;
 							else failed++;
 						}
 						if (status && this.statusEl === status) {
@@ -248,7 +251,7 @@ export class WorkspaceHubController {
 						}
 						this.callbacks.onRefresh();
 					})();
-				}));
+				}, ro));
 			}
 			btns.append(this.btn(t('zotero-tabflow-hub-dissolve', '解散'), 'ztf-hub-btn danger', () => {
 				if (Services.prompt.confirm(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-confirm', `解散“${g.name}”？标签页将保留并回到未分组。`, { name: g.name }))) {
@@ -264,7 +267,7 @@ export class WorkspaceHubController {
 						Services.prompt.alert(this.win, t('zotero-tabflow-dissolve-group', '解散分组'), t('zotero-tabflow-dissolve-group-failed', '无法解散分组：数据为只读，或分组已不存在。'));
 					}
 				}
-			}));
+			}, ro));
 			card.append(info, btns);
 			sec.append(card);
 		}
@@ -314,6 +317,7 @@ export class WorkspaceHubController {
 		});
 		info.append(title, meta);
 
+		const ro = this.store.readOnly;
 		const btns = this.h('div', 'ztf-hub-card-actions');
 		btns.append(
 			this.btn(t('zotero-tabflow-hub-preview', '预览恢复'), 'ztf-hub-btn primary', () => {
@@ -323,7 +327,7 @@ export class WorkspaceHubController {
 			this.btn(t('zotero-tabflow-hub-quick-merge', '直接合并'), 'ztf-hub-btn', () => {
 				this.dispose();
 				this.callbacks.onQuickMerge(s);
-			}),
+			}, ro),
 		);
 		if (isRolling) {
 			btns.append(this.btn(t('zotero-tabflow-hub-promote', '转存'), 'ztf-hub-btn', () => {
@@ -331,12 +335,12 @@ export class WorkspaceHubController {
 					this.store.save();
 					this.renderContent();
 				}
-			}));
+			}, ro));
 		}
 		btns.append(this.btn(t('zotero-tabflow-hub-delete', '删除'), 'ztf-hub-btn danger', () => {
 			this.store.deleteSession(s.id);
 			this.renderContent();
-		}));
+		}, ro));
 		card.append(info, btns);
 		return card;
 	}

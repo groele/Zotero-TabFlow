@@ -60,9 +60,12 @@ export class SidebarHoverCard {
 		if (remark) this.card.append(mk('ztf-hc-note', t('zotero-tabflow-hover-remark', `备注：${remark}`, { note: remark })));
 
 		const rect = anchor.getBoundingClientRect();
-		this.card.style.left = `${Math.max(0, Math.min(rect.right + 8, this.win.innerWidth - 332))}px`;
-		this.card.style.top = `${Math.max(0, Math.min(rect.top, this.win.innerHeight - 165))}px`;
 		this.card.hidden = false;
+		const cardRect = this.card.getBoundingClientRect?.();
+		const cardW = cardRect?.width ? Math.ceil(cardRect.width) + 16 : 332;
+		const cardH = cardRect?.height ? Math.ceil(cardRect.height) + 12 : 165;
+		this.card.style.left = `${Math.max(0, Math.min(rect.right + 8, this.win.innerWidth - cardW))}px`;
+		this.card.style.top = `${Math.max(0, Math.min(rect.top, this.win.innerHeight - cardH))}px`;
 	}
 
 	hide(): void {

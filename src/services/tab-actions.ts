@@ -4,6 +4,7 @@ import type { TabFlowStore } from '../core/store.ts';
 import type { NativeTabLike, TabCloseOptions, TrackedTab, VirtualMemberMeta } from '../core/types.ts';
 import { openAttachmentFolder } from './attachment-folder.ts';
 import { uncategorizedCollectionLabel, type ItemMetadataService } from './item-metadata.ts';
+import { parseItemFullKey } from './session-restore.ts';
 
 export function isTabBusyOrProtected(
 	tab: NativeTabLike,
@@ -98,6 +99,15 @@ export class TabActionService {
 		const members = tabs.map(toVirtualMember).filter((member) => member !== null);
 		if (groupId) this.store.setGroupHidden(groupId, true, members);
 		else this.store.hideUngrouped(tabs.map((tab) => tab.key), members);
+		const selectedID = this.meta.getSelectedTabID?.();
+		if (selectedID && tabs.some((tab) => tab.tab.id === selectedID)) {
+			const visibleIDs = new Set(this.store.visibleGroups().map((group) => group.id));
+			const fallback = this.meta.buildTrackedTabs().find((tab) => visibleIDs.has(tab.groupId))?.tab.id
+				|| this.meta.getNativeTabs?.().find((tab) => tab.type === 'library')?.id;
+			if (fallback && fallback !== selectedID) {
+				void Promise.resolve((this.win as any).Zotero_Tabs?.select?.(fallback)).catch((error) => Zotero.logError(error as Error));
+			}
+		}
 	}
 
 	undoCloseTab(): boolean {
@@ -146,9 +156,15 @@ export class TabActionService {
 		return count;
 	}
 
-	async openVirtualOrItem(itemID: number, groupId?: string, openInBackground = false): Promise<boolean> {
+	async openVirtualOrItem(itemID: number, groupId?: string, openInBackground = false, keyFallback?: string): Promise<boolean> {
 		try {
-			const item = Zotero.Items.get(itemID);
+			let item = itemID ? Zotero.Items.get(itemID) : null;
+			if ((!item || item.deleted) && keyFallback) {
+				const parsed = parseItemFullKey(keyFallback);
+				if (parsed && typeof (Zotero.Items as any).getByLibraryAndKeyAsync === 'function') {
+					item = await (Zotero.Items as any).getByLibraryAndKeyAsync(parsed.libraryID, parsed.itemKey);
+				}
+			}
 			if (!item || item.deleted) return false;
 			const isNote = item.isNote?.() === true;
 			const target = isNote || item.isAttachment() ? item : await item.getBestAttachment();
