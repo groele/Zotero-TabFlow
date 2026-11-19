@@ -29,6 +29,7 @@
   var PREF_PREFIX = "extensions.zotero.tabflow.";
   var DEFAULT_PREFS = {
     enableHorizontalGroups: true,
+    horizontalTabCompactMode: "inactive",
     enableGroupHiding: true,
     compactTopBar: false,
     enableVerticalSidebar: true,
@@ -109,6 +110,7 @@
     void Promise.resolve().then(() => syncMenulistLabels(doc));
   }
   function updateDependencies(doc) {
+    setSubtreeDisabled(doc.getElementById("tabflow-sub-horizontalCompactMode"), !getPref("enableHorizontalGroups"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-compactTopBar"), !getPref("enableHorizontalGroups") || !getPref("enableVerticalSidebar"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-enableBatchSelection"), !getPref("enableVerticalSidebar"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-pinnedIconOnly"), !getPref("enablePinnedTabs"));
@@ -143,6 +145,7 @@
       if (!this.observerIDs.length) {
         this.observerIDs = [
           "enableHorizontalGroups",
+          "horizontalTabCompactMode",
           "enableVerticalSidebar",
           "enablePinnedTabs",
           "enableCollectionAutoGroup",

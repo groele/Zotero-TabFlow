@@ -1,5 +1,6 @@
 export type TabDisplayMode = 'original' | 'note' | 'both';
 export type MultiCollectionStrategy = 'active' | 'existing' | 'first';
+export type HorizontalTabCompactMode = 'inactive' | 'auto' | 'off';
 export type VerticalTitleMode = 'title' | 'shortTitle' | 'filename';
 export type VerticalSubtitleMode = 'source' | 'creatorYear' | 'collection' | 'lastViewed' | 'none';
 export type SidebarViewMode = 'groups' | 'collection' | 'recent';

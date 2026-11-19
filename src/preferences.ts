@@ -24,6 +24,7 @@ function scheduleMenulistSync(doc: Document): void {
 }
 
 function updateDependencies(doc: Document): void {
+	setSubtreeDisabled(doc.getElementById('tabflow-sub-horizontalCompactMode'), !getPref('enableHorizontalGroups'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-compactTopBar'), !getPref('enableHorizontalGroups') || !getPref('enableVerticalSidebar'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-enableBatchSelection'), !getPref('enableVerticalSidebar'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-pinnedIconOnly'), !getPref('enablePinnedTabs'));
@@ -63,7 +64,7 @@ const TabFlowPreferences = {
 
 		if (!this.observerIDs.length) {
 			this.observerIDs = [
-				'enableHorizontalGroups', 'enableVerticalSidebar', 'enablePinnedTabs',
+				'enableHorizontalGroups', 'horizontalTabCompactMode', 'enableVerticalSidebar', 'enablePinnedTabs',
 				'enableCollectionAutoGroup', 'enableTabRemarks', 'enableSessions',
 				'enableTabSleep', 'enableStaleSuggestions', 'enableTabContextMenu',
 				'multiCollectionStrategy', 'remarkDisplayMode', 'verticalTabTitleMode', 'verticalTabSubtitleMode',

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Zotero TabFlow",
-  "version": "17.5.0",
+  "version": "17.5.1",
   "description": "Unified horizontal & vertical tab grouping, pinned tabs, tab sleep, remarks, sessions, collection auto-grouping, and Spotlight search for Zotero.",
   "homepage_url": "https://github.com/groele/Zotero-TabFlow",
   "applications": {

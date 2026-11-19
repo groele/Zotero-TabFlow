@@ -113,6 +113,8 @@ export function applySessionLayout(
 			...state.collapsed,
 			...(snapshot.collapsed ?? []).filter((id) => addedIds.has(id)),
 		])];
+		if (!state.ungroupedName && snapshot.ungroupedName) state.ungroupedName = snapshot.ungroupedName;
+		if (state.ungroupedColor === '#737373' && snapshot.ungroupedColor) state.ungroupedColor = snapshot.ungroupedColor;
 	} else {
 		state.collapsed = (snapshot.collapsed ?? []).filter((id) => validIds.has(id));
 		state.ungroupedName = snapshot.ungroupedName;

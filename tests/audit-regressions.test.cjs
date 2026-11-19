@@ -254,3 +254,24 @@ test('hasZoteroDraggedItems detects dragover payloads without getData and Worksp
 	assert.ok(box.children[2].textContent.includes('只读'));
 	hub.dispose();
 });
+
+test('horizontal inactive tabs compress to ellipsis chips while active tab stays expanded and workspace sync preserves custom names/remarks', () => {
+	const { shouldCollapseHorizontalChip } = require('../src/ui/group-visibility.ts');
+	assert.equal(shouldCollapseHorizontalChip('inactive', 2, false), true);
+	assert.equal(shouldCollapseHorizontalChip('inactive', 2, true), false);
+	assert.equal(shouldCollapseHorizontalChip('auto', 5, false), false);
+	assert.equal(shouldCollapseHorizontalChip('auto', 6, false), true);
+	assert.equal(shouldCollapseHorizontalChip('auto', 6, true), false);
+	assert.equal(shouldCollapseHorizontalChip('off', 12, false), false);
+
+	const { store } = fixture();
+	store.renameGroup('', 'ReS2');
+	store.setRemark('1:R1', 'Raman peak');
+	const snap = store.saveSession('ReS2 · 15:40', ['1:R1']);
+	assert.equal(snap.ungroupedName, 'ReS2');
+	assert.equal(snap.remarks['1:R1'].note, 'Raman peak');
+
+	const target = new TabFlowStore();
+	target.restoreSessionLayout(snap, true);
+	assert.equal(target.state.ungroupedName, 'ReS2');
+});

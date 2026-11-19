@@ -18,22 +18,13 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 }
 
 /* Horizontal Grouped Tab Bar (must opt out of titlebar window-dragging!) */
-#tab-bar-container[data-ztf-inline]:not([hidden]) { min-width: 0; overflow: hidden; }
+#tab-bar-container[data-ztf-inline]:not([hidden]) { flex: 1 1 0%; min-width: 0; overflow: hidden; }
 #tab-bar-container[data-ztf-inline] > div { min-width: 0; flex: 1 1 0%; }
-#tab-bar-container[data-ztf-inline] .tab-bar-inner-container {
-  --ztf-tab-height: 28px;
-  min-width: 0; min-height: var(--tab-min-height, 36px); align-items: center;
-}
+#tab-bar-container[data-ztf-inline] .tab-bar-inner-container { --ztf-tab-height: 28px; min-width: 0; min-height: var(--tab-min-height, 36px); align-items: center; }
 #tab-bar-container[data-ztf-inline] ~ #zotero-tabs-toolbar { flex: 0 0 auto; -moz-window-dragging: no-drag; }
-#tab-bar-container[data-ztf-inline] .pinned-tabs {
-  display: block; flex: 0 1 auto; min-width: 0; max-width: 42%; padding: 0;
-}
-#tab-bar-container[data-ztf-inline] .pinned-tabs .tabs {
-  padding: 4px 1px; position: static; overflow: visible;
-}
-#tab-bar-container[data-ztf-inline] .pinned-tabs .tab {
-  flex: 0 1 200px; min-width: 0; max-width: 200px; height: var(--ztf-tab-height);
-}
+#tab-bar-container[data-ztf-inline] .pinned-tabs { display: block; flex: 0 1 auto; min-width: 0; max-width: 42%; padding: 0; }
+#tab-bar-container[data-ztf-inline] .pinned-tabs .tabs { padding: 4px 1px; position: static; overflow: visible; }
+#tab-bar-container[data-ztf-inline] .pinned-tabs .tab { flex: 0 1 200px; min-width: 0; max-width: 200px; height: var(--ztf-tab-height); }
 #tab-bar-container[data-ztf-inline] .tabs-wrapper,
 #tab-bar-container[data-ztf-inline] .scroll-start-arrow,
 #tab-bar-container[data-ztf-inline] .scroll-end-arrow { display: none !important; }
@@ -102,6 +93,10 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 #ztf-inline .ztf-doc.ztf-sleeping { opacity: 0.65; }
 #ztf-inline .ztf-doc.ztf-virtual { box-shadow: inset 0 0 0 1px var(--ztf-border); opacity: 0.62; background: transparent; }
 #ztf-inline .ztf-doc[data-ztf-drop="stack"] { outline: 2px solid var(--ztf-accent); outline-offset: -2px; }
+#ztf-inline .ztf-doc.ztf-chip-collapsed { min-width: 30px; max-width: 36px; padding-inline: 8px; justify-content: center; background: color-mix(in srgb, currentColor 5%, transparent); }
+#ztf-inline .ztf-doc.ztf-virtual.ztf-chip-collapsed { background: transparent; }
+#ztf-inline .ztf-doc.ztf-chip-collapsed .ztf-doc-close { display: none; }
+#ztf-inline .ztf-doc.ztf-chip-collapsed .ztf-doc-title { font-weight: 600; text-overflow: clip; }
 #ztf-inline .ztf-doc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #ztf-inline .ztf-doc-close {
   border: 0; background: transparent; color: var(--ztf-muted); cursor: pointer; padding: 0;

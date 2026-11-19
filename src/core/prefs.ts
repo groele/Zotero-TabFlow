@@ -1,4 +1,5 @@
 import type {
+	HorizontalTabCompactMode,
 	MultiCollectionStrategy,
 	TabDisplayMode,
 	VerticalSubtitleMode,
@@ -9,6 +10,7 @@ export const PREF_PREFIX = 'extensions.zotero.tabflow.';
 
 export interface TabFlowPrefs {
 	enableHorizontalGroups: boolean;
+	horizontalTabCompactMode: HorizontalTabCompactMode;
 	enableGroupHiding: boolean;
 	compactTopBar: boolean;
 	enableVerticalSidebar: boolean;
@@ -46,6 +48,7 @@ export interface TabFlowPrefs {
 
 export const DEFAULT_PREFS: TabFlowPrefs = {
 	enableHorizontalGroups: true,
+	horizontalTabCompactMode: 'inactive',
 	enableGroupHiding: true,
 	compactTopBar: false,
 	enableVerticalSidebar: true,

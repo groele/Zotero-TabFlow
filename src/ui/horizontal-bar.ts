@@ -7,7 +7,7 @@ import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { HorizontalDragController } from './horizontal-drag.ts';
 import { GroupSection, reconcileGroupSections } from './group-section.ts';
-import { indexGroupMembers, shouldRenderGroupHeading } from './group-visibility.ts';
+import { indexGroupMembers, shouldCollapseHorizontalChip, shouldRenderGroupHeading } from './group-visibility.ts';
 import { createSvgIcon } from './icons.ts';
 import { renderPinnedStrip } from './pinned-strip.ts';
 import type { PopoverController } from './popovers.ts';
@@ -140,6 +140,8 @@ export class HorizontalBarController {
 			: [];
 		const virtualsByGroup = indexGroupMembers(virtualMembers, (member) => this.store.groupOfKey(member.key));
 		const collapsedIds = new Set(this.store.state.collapsed);
+		const compactPref = getPref('horizontalTabCompactMode');
+		const totalInlineChips = tracked.filter((t) => !t.pinned).length + virtualMembers.filter((m) => visibleGroupIds.has(this.store.groupOfKey(m.key))).length;
 		const groups = rawGroups.filter((g) => {
 			const hasMembers = unpinned.has(g.id);
 			const hasVirtuals = virtualsByGroup.has(g.id);
@@ -170,13 +172,15 @@ export class HorizontalBarController {
 
 			if (!collapsed) {
 				const nodes = this.doc.createDocumentFragment();
-				for (const t of members) nodes.append(this.buildTabNode(t, selectedID));
+				for (const t of members) nodes.append(this.buildTabNode(t, selectedID, shouldCollapseHorizontalChip(compactPref, totalInlineChips, t.tab.id === selectedID)));
+				const collapseVirtual = shouldCollapseHorizontalChip(compactPref, totalInlineChips, false);
 				for (const v of virtuals) {
-					const vNode = this.h('button', 'ztf-doc ztf-virtual');
+					const vNode = this.h('button', `ztf-doc ztf-virtual${collapseVirtual ? ' ztf-chip-collapsed' : ''}`);
 					vNode.type = 'button';
 					const label = this.h('span', 'ztf-doc-title');
-					label.textContent = `◌ ${this.meta.getDisplayTitle(v)}`;
+					label.textContent = collapseVirtual ? '···' : `◌ ${this.meta.getDisplayTitle(v)}`;
 					vNode.append(label);
+					vNode.setAttribute('aria-label', v.title);
 					vNode.title = t('zotero-tabflow-virtual-reload-tip', `虚拟保留成员（点击重新加载）：${v.title}`, { title: v.title });
 					vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id, false, v.key).then((opened) => {
 						if (!opened) Services.prompt.alert(this.win, v.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。'));
@@ -235,11 +239,14 @@ export class HorizontalBarController {
 		input.select();
 	}
 
-	private buildTabNode(tab: TrackedTab, selectedID: string): HTMLElement {
-		const node = this.h('div', `ztf-doc${tab.tab.id === selectedID ? ' selected' : ''}${tab.status === 'sleeping' ? ' ztf-sleeping' : ''}`);
-		node.title = `${tab.title}\n${t('zotero-tabflow-collection-label', '集合')}：${tab.collection}`;
+	private buildTabNode(tab: TrackedTab, selectedID: string, compactChip = false): HTMLElement {
+		const selected = tab.tab.id === selectedID;
+		const node = this.h('div', `ztf-doc${selected ? ' selected' : ''}${tab.status === 'sleeping' ? ' ztf-sleeping' : ''}${compactChip ? ' ztf-chip-collapsed' : ''}`);
+		const remark = getPref('enableTabRemarks') ? this.store.getRemark(tab.key).note : '';
+		node.title = `${remark ? `[${remark}] ` : ''}${tab.title}\n${t('zotero-tabflow-collection-label', '集合')}：${tab.collection}`;
+		node.setAttribute('aria-label', tab.title);
 		const label = this.h('span', 'ztf-doc-title');
-		label.textContent = `${tab.status === 'sleeping' ? '💤 ' : ''}${this.meta.getDisplayTitle(tab)}`;
+		label.textContent = compactChip ? '···' : `${tab.status === 'sleeping' ? '💤 ' : ''}${this.meta.getDisplayTitle(tab)}`;
 		const closeBtn = this.h('button', 'ztf-doc-close');
 		closeBtn.type = 'button';
 		closeBtn.setAttribute('aria-label', t('zotero-tabflow-close-tab-aria', `关闭标签：${tab.title}`, { title: tab.title }));

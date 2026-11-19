@@ -5,6 +5,7 @@
   var PREF_PREFIX = "extensions.zotero.tabflow.";
   var DEFAULT_PREFS = {
     enableHorizontalGroups: true,
+    horizontalTabCompactMode: "inactive",
     enableGroupHiding: true,
     compactTopBar: false,
     enableVerticalSidebar: true,
@@ -187,6 +188,8 @@
         ...state.collapsed,
         ...(snapshot.collapsed ?? []).filter((id) => addedIds.has(id))
       ])];
+      if (!state.ungroupedName && snapshot.ungroupedName) state.ungroupedName = snapshot.ungroupedName;
+      if (state.ungroupedColor === "#737373" && snapshot.ungroupedColor) state.ungroupedColor = snapshot.ungroupedColor;
     } else {
       state.collapsed = (snapshot.collapsed ?? []).filter((id) => validIds.has(id));
       state.ungroupedName = snapshot.ungroupedName;
@@ -1540,6 +1543,10 @@
   function shouldRenderGroupHeading(groupId, hasOpenMembers, hasVirtualMembers, hasCustomName) {
     return Boolean(groupId || hasCustomName || hasOpenMembers || hasVirtualMembers);
   }
+  function shouldCollapseHorizontalChip(mode, totalChips, isSelected) {
+    if (isSelected || mode === "off") return false;
+    return mode === "inactive" || totalChips > 5;
+  }
   function indexGroupMembers(members, groupOf) {
     const groups = /* @__PURE__ */ new Map();
     for (const member of members) {
@@ -2198,6 +2205,8 @@
       const virtualMembers = getPref("enableVirtualMembers") ? Object.values(this.store.state.virtualMembers).filter((member) => !openKeys.has(member.key)) : [];
       const virtualsByGroup = indexGroupMembers(virtualMembers, (member) => this.store.groupOfKey(member.key));
       const collapsedIds = new Set(this.store.state.collapsed);
+      const compactPref = getPref("horizontalTabCompactMode");
+      const totalInlineChips = tracked.filter((t2) => !t2.pinned).length + virtualMembers.filter((m) => visibleGroupIds.has(this.store.groupOfKey(m.key))).length;
       const groups = rawGroups.filter((g) => {
         const hasMembers = unpinned.has(g.id);
         const hasVirtuals = virtualsByGroup.has(g.id);
@@ -2231,13 +2240,15 @@
         this.drag.bindGroupDrag(section.heading, g.id, collapsed);
         if (!collapsed) {
           const nodes = this.doc.createDocumentFragment();
-          for (const t2 of members) nodes.append(this.buildTabNode(t2, selectedID));
+          for (const t2 of members) nodes.append(this.buildTabNode(t2, selectedID, shouldCollapseHorizontalChip(compactPref, totalInlineChips, t2.tab.id === selectedID)));
+          const collapseVirtual = shouldCollapseHorizontalChip(compactPref, totalInlineChips, false);
           for (const v of virtuals) {
-            const vNode = this.h("button", "ztf-doc ztf-virtual");
+            const vNode = this.h("button", `ztf-doc ztf-virtual${collapseVirtual ? " ztf-chip-collapsed" : ""}`);
             vNode.type = "button";
             const label = this.h("span", "ztf-doc-title");
-            label.textContent = `◌ ${this.meta.getDisplayTitle(v)}`;
+            label.textContent = collapseVirtual ? "···" : `◌ ${this.meta.getDisplayTitle(v)}`;
             vNode.append(label);
+            vNode.setAttribute("aria-label", v.title);
             vNode.title = t("zotero-tabflow-virtual-reload-tip", `虚拟保留成员（点击重新加载）：${v.title}`, { title: v.title });
             vNode.onclick = () => void this.actions.openVirtualOrItem(v.itemID, g.id, false, v.key).then((opened) => {
               if (!opened) Services.prompt.alert(this.win, v.title, t("zotero-tabflow-spot-hidden-open-failed", "未能打开这篇文献。请检查附件文件是否可用。"));
@@ -2298,12 +2309,15 @@
       input.focus();
       input.select();
     }
-    buildTabNode(tab, selectedID) {
-      const node = this.h("div", `ztf-doc${tab.tab.id === selectedID ? " selected" : ""}${tab.status === "sleeping" ? " ztf-sleeping" : ""}`);
-      node.title = `${tab.title}
+    buildTabNode(tab, selectedID, compactChip = false) {
+      const selected = tab.tab.id === selectedID;
+      const node = this.h("div", `ztf-doc${selected ? " selected" : ""}${tab.status === "sleeping" ? " ztf-sleeping" : ""}${compactChip ? " ztf-chip-collapsed" : ""}`);
+      const remark = getPref("enableTabRemarks") ? this.store.getRemark(tab.key).note : "";
+      node.title = `${remark ? `[${remark}] ` : ""}${tab.title}
 ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
+      node.setAttribute("aria-label", tab.title);
       const label = this.h("span", "ztf-doc-title");
-      label.textContent = `${tab.status === "sleeping" ? "💤 " : ""}${this.meta.getDisplayTitle(tab)}`;
+      label.textContent = compactChip ? "···" : `${tab.status === "sleeping" ? "💤 " : ""}${this.meta.getDisplayTitle(tab)}`;
       const closeBtn = this.h("button", "ztf-doc-close");
       closeBtn.type = "button";
       closeBtn.setAttribute("aria-label", t("zotero-tabflow-close-tab-aria", `关闭标签：${tab.title}`, { title: tab.title }));
@@ -3605,6 +3619,17 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
           });
         });
         popup.append(this.xul("menuseparator"));
+        if (getPref("enableSessions") && !this.store.readOnly) {
+          this.item(popup, `💾 ${t("zotero-tabflow-menu-save-to-workspace", "保存到工作区…")}`, () => {
+            this.defer(() => {
+              const baseName = group.id || this.store.state.ungroupedName ? group.name : t("zotero-tabflow-session-default-name", "工作区会话");
+              const val = { value: `${baseName} · ${formatSnapshotTimestamp(Date.now())}` };
+              if (!Services.prompt.prompt(this.win, t("zotero-tabflow-hub-save-session", "保存工作区"), t("zotero-tabflow-sessions-save-prompt", "请输入会话名称："), val, null, {})) return;
+              this.store.saveSession(val.value, this.meta.buildTrackedTabs().map((tab) => tab.key));
+              this.onRefresh();
+            });
+          });
+        }
         if (virtualMembers.length) {
           this.item(popup, `▶ ${t("zotero-tabflow-menu-open-virtual-all", `打开组内全部虚拟文献 (${virtualMembers.length})`, { count: virtualMembers.length })}`, () => {
             void (async () => {
@@ -4564,22 +4589,13 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 }
 
 /* Horizontal Grouped Tab Bar (must opt out of titlebar window-dragging!) */
-#tab-bar-container[data-ztf-inline]:not([hidden]) { min-width: 0; overflow: hidden; }
+#tab-bar-container[data-ztf-inline]:not([hidden]) { flex: 1 1 0%; min-width: 0; overflow: hidden; }
 #tab-bar-container[data-ztf-inline] > div { min-width: 0; flex: 1 1 0%; }
-#tab-bar-container[data-ztf-inline] .tab-bar-inner-container {
-  --ztf-tab-height: 28px;
-  min-width: 0; min-height: var(--tab-min-height, 36px); align-items: center;
-}
+#tab-bar-container[data-ztf-inline] .tab-bar-inner-container { --ztf-tab-height: 28px; min-width: 0; min-height: var(--tab-min-height, 36px); align-items: center; }
 #tab-bar-container[data-ztf-inline] ~ #zotero-tabs-toolbar { flex: 0 0 auto; -moz-window-dragging: no-drag; }
-#tab-bar-container[data-ztf-inline] .pinned-tabs {
-  display: block; flex: 0 1 auto; min-width: 0; max-width: 42%; padding: 0;
-}
-#tab-bar-container[data-ztf-inline] .pinned-tabs .tabs {
-  padding: 4px 1px; position: static; overflow: visible;
-}
-#tab-bar-container[data-ztf-inline] .pinned-tabs .tab {
-  flex: 0 1 200px; min-width: 0; max-width: 200px; height: var(--ztf-tab-height);
-}
+#tab-bar-container[data-ztf-inline] .pinned-tabs { display: block; flex: 0 1 auto; min-width: 0; max-width: 42%; padding: 0; }
+#tab-bar-container[data-ztf-inline] .pinned-tabs .tabs { padding: 4px 1px; position: static; overflow: visible; }
+#tab-bar-container[data-ztf-inline] .pinned-tabs .tab { flex: 0 1 200px; min-width: 0; max-width: 200px; height: var(--ztf-tab-height); }
 #tab-bar-container[data-ztf-inline] .tabs-wrapper,
 #tab-bar-container[data-ztf-inline] .scroll-start-arrow,
 #tab-bar-container[data-ztf-inline] .scroll-end-arrow { display: none !important; }
@@ -4648,6 +4664,10 @@ item-pane-sidenav .btn[data-l10n-id="zotero-tabflow-pdf-folder-sidenav"] {
 #ztf-inline .ztf-doc.ztf-sleeping { opacity: 0.65; }
 #ztf-inline .ztf-doc.ztf-virtual { box-shadow: inset 0 0 0 1px var(--ztf-border); opacity: 0.62; background: transparent; }
 #ztf-inline .ztf-doc[data-ztf-drop="stack"] { outline: 2px solid var(--ztf-accent); outline-offset: -2px; }
+#ztf-inline .ztf-doc.ztf-chip-collapsed { min-width: 30px; max-width: 36px; padding-inline: 8px; justify-content: center; background: color-mix(in srgb, currentColor 5%, transparent); }
+#ztf-inline .ztf-doc.ztf-virtual.ztf-chip-collapsed { background: transparent; }
+#ztf-inline .ztf-doc.ztf-chip-collapsed .ztf-doc-close { display: none; }
+#ztf-inline .ztf-doc.ztf-chip-collapsed .ztf-doc-title { font-weight: 600; text-overflow: clip; }
 #ztf-inline .ztf-doc-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #ztf-inline .ztf-doc-close {
   border: 0; background: transparent; color: var(--ztf-muted); cursor: pointer; padding: 0;
