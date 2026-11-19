@@ -1,4 +1,5 @@
-import { DEFAULT_PREFS, PREF_PREFIX, getPref } from './core/prefs.ts';
+import { resetI18nCache } from './core/i18n.ts';
+import { DEFAULT_PREFS, PREF_PREFIX, enablePrefCache, getPref, invalidatePrefCache } from './core/prefs.ts';
 import { TabFlowStore } from './core/store.ts';
 import { ActivityTrackerService } from './services/activity-tracker.ts';
 import { ItemMetadataService } from './services/item-metadata.ts';
@@ -28,11 +29,15 @@ class WindowWorkspace {
 	private notifierID: string | null = null;
 	private observer: MutationObserver | null = null;
 	private refreshTimer: number | null = null;
+	private resizeTimer: number | null = null;
 	private ageTimer: number | null = null;
 	private lastSelected = '';
 	private disposed = false;
 	private ageTickCount = 0;
-	private onResize = (): void => { this.schedule(); };
+	private onResize = (): void => {
+		if (this.disposed || this.resizeTimer !== null) return;
+		this.resizeTimer = this.win.setTimeout(() => { this.resizeTimer = null; this.schedule(); }, 100);
+	};
 
 	private saveRollingIfNeeded(): void {
 		if (!getPref('enableSessions') || !getPref('enableRollingSnapshots')) return;
@@ -110,6 +115,7 @@ class WindowWorkspace {
 		const host = doc.getElementById('tab-bar-container');
 		if (host) {
 			this.observer = new (this.win as any).MutationObserver((records: MutationRecord[]) => {
+				if (this.disposed || this.refreshTimer !== null) return;
 				const inline = doc.getElementById('ztf-inline');
 				const pinned = doc.querySelector('.ztf-pinned-strip');
 				const actionsBar = doc.getElementById('ztf-toolbar-actions');
@@ -170,7 +176,8 @@ class WindowWorkspace {
 	dispose(): void {
 		this.disposed = true;
 		this.win.removeEventListener?.('resize', this.onResize);
-		try { this.saveRollingIfNeeded(); } catch { /* Best-effort snapshot on unload */ }
+		if (this.resizeTimer !== null) this.win.clearTimeout(this.resizeTimer);
+		try { this.saveRollingIfNeeded(); this.store.flushPendingSave(); } catch { /* Best-effort snapshot on unload */ }
 		if (this.refreshTimer !== null) this.win.clearTimeout(this.refreshTimer);
 		if (this.ageTimer !== null) this.win.clearInterval(this.ageTimer);
 		this.observer?.disconnect();
@@ -204,12 +211,13 @@ class TabFlowPlugin {
 	}
 
 	start(): void {
+		enablePrefCache(true);
 		this.store.load();
 		if (getPref('debug')) Zotero.debug('[TabFlow] Workspace state loaded');
 		this.pdfFolderSection.register(this.id, this.rootURI);
 		this.unsubscribeStore = this.store.subscribe(() => this.refreshAll());
-		this.prefObserverIDs = Object.keys(DEFAULT_PREFS).map((key) =>
-			Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => this.refreshAll(), true),
+		this.prefObserverIDs = (Object.keys(DEFAULT_PREFS) as Array<keyof typeof DEFAULT_PREFS>).map((key) =>
+			Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => { invalidatePrefCache(key); this.refreshAll(); }, true),
 		);
 		for (const win of this.getMainWindows()) this.onMainWindowLoad(win);
 	}
@@ -240,6 +248,9 @@ class TabFlowPlugin {
 
 	shutdown(): void {
 		if (getPref('debug')) Zotero.debug('[TabFlow] Shutting down');
+		this.store.flushPendingSave();
+		enablePrefCache(false);
+		resetI18nCache();
 		this.pdfFolderSection.unregister();
 		for (const id of this.prefObserverIDs) Zotero.Prefs.unregisterObserver(id);
 		this.prefObserverIDs = [];

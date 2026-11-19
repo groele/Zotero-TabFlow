@@ -39,6 +39,9 @@ export function renderSidebarStatusBar(
 	counts: WorkspaceStatusCounts,
 	onSleepInactive: () => void,
 ): void {
+	const sig = `${counts.active}|${counts.sleeping}|${counts.virtual}|${counts.overBudget ? counts.budget : 0}`;
+	if (bar.dataset?.ztfSig === sig) return;
+	if (bar.dataset) bar.dataset.ztfSig = sig;
 	bar.replaceChildren();
 	const summary = doc.createElementNS(XHTML, 'span') as HTMLSpanElement;
 	summary.className = 'ztf-sb-status-text';

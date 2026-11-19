@@ -84,16 +84,30 @@ export const DEFAULT_PREFS: TabFlowPrefs = {
 	debug: false,
 };
 
+let prefCacheEnabled = false;
+const prefCache = new Map<keyof TabFlowPrefs, TabFlowPrefs[keyof TabFlowPrefs]>();
+
+export function enablePrefCache(active: boolean): void {
+	prefCacheEnabled = active;
+	prefCache.clear();
+}
+
+export function invalidatePrefCache(key?: keyof TabFlowPrefs): void {
+	if (key) prefCache.delete(key);
+	else prefCache.clear();
+}
+
 export function getPref<K extends keyof TabFlowPrefs>(key: K): TabFlowPrefs[K] {
+	if (prefCacheEnabled && prefCache.has(key)) return prefCache.get(key) as TabFlowPrefs[K];
 	const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
 	const fallback = DEFAULT_PREFS[key];
-	if (typeof raw !== typeof fallback) return fallback;
+	let val: TabFlowPrefs[K] = typeof raw !== typeof fallback ? fallback : (raw as TabFlowPrefs[K]);
 	const range = NUMERIC_RANGES[key];
 	if (range && typeof raw === 'number') {
-		if (!Number.isFinite(raw)) return fallback;
-		return Math.max(range[0], Math.min(range[1], Math.trunc(raw))) as TabFlowPrefs[K];
+		val = (Number.isFinite(raw) ? Math.max(range[0], Math.min(range[1], Math.trunc(raw))) : fallback) as TabFlowPrefs[K];
 	}
-	return raw as TabFlowPrefs[K];
+	if (prefCacheEnabled) prefCache.set(key, val);
+	return val;
 }
 
 const NUMERIC_RANGES: Partial<Record<keyof TabFlowPrefs, [number, number]>> = {
@@ -106,10 +120,12 @@ const NUMERIC_RANGES: Partial<Record<keyof TabFlowPrefs, [number, number]>> = {
 };
 
 export function setPref<K extends keyof TabFlowPrefs>(key: K, value: TabFlowPrefs[K]): void {
+	prefCache.delete(key);
 	Zotero.Prefs.set(PREF_PREFIX + key, value, true);
 }
 
 export function resetAllPrefs(): void {
+	prefCache.clear();
 	for (const [key, value] of Object.entries(DEFAULT_PREFS)) {
 		Zotero.Prefs.set(PREF_PREFIX + key, value, true);
 	}

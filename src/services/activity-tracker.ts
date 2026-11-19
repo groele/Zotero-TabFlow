@@ -27,7 +27,7 @@ export class ActivityTrackerService {
 				changed = true;
 			}
 		}
-		if (changed) this.store.save(false);
+		if (changed) this.store.scheduleSave();
 		return selectedID;
 	}
 

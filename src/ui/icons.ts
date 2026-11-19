@@ -80,24 +80,38 @@ const ICONS: Record<IconName, ShapeDef[]> = {
 	],
 };
 
+const docIconCache = new WeakMap<Document, Map<string, SVGSVGElement>>();
+
 export function createSvgIcon(doc: Document, name: IconName, size = 14): SVGSVGElement {
-	const svg = doc.createElementNS(SVG_NS, 'svg') as unknown as SVGSVGElement;
-	svg.setAttribute('viewBox', '0 0 16 16');
-	svg.setAttribute('width', String(size));
-	svg.setAttribute('height', String(size));
-	svg.setAttribute('fill', 'none');
-	svg.setAttribute('stroke', 'currentColor');
-	svg.setAttribute('stroke-width', '1.35');
-	svg.setAttribute('stroke-linecap', 'round');
-	svg.setAttribute('stroke-linejoin', 'round');
-	svg.setAttribute('aria-hidden', 'true');
-	svg.classList.add('ztf-icon');
-	for (const def of ICONS[name]) {
-		const el = doc.createElementNS(SVG_NS, def.tag);
-		for (const [k, v] of Object.entries(def.attrs)) {
-			el.setAttribute(k, v);
-		}
-		svg.append(el);
+	let cache = docIconCache.get(doc);
+	if (!cache) {
+		cache = new Map();
+		docIconCache.set(doc, cache);
 	}
-	return svg;
+	const key = `${name}:${size}`;
+	let proto = cache.get(key);
+	if (!proto) {
+		proto = doc.createElementNS(SVG_NS, 'svg') as unknown as SVGSVGElement;
+		proto.setAttribute('viewBox', '0 0 16 16');
+		proto.setAttribute('width', String(size));
+		proto.setAttribute('height', String(size));
+		proto.setAttribute('fill', 'none');
+		proto.setAttribute('stroke', 'currentColor');
+		proto.setAttribute('stroke-width', '1.35');
+		proto.setAttribute('stroke-linecap', 'round');
+		proto.setAttribute('stroke-linejoin', 'round');
+		proto.setAttribute('aria-hidden', 'true');
+		proto.classList.add('ztf-icon');
+		for (const def of ICONS[name]) {
+			const el = doc.createElementNS(SVG_NS, def.tag);
+			for (const [k, v] of Object.entries(def.attrs)) el.setAttribute(k, v);
+			proto.append(el);
+		}
+		cache.set(key, proto);
+	}
+	return typeof proto.cloneNode === 'function' ? (proto.cloneNode(true) as SVGSVGElement) : (() => {
+		const copy = doc.createElementNS(SVG_NS, 'svg') as unknown as SVGSVGElement;
+		for (const def of ICONS[name]) { const el = doc.createElementNS(SVG_NS, def.tag); for (const [k, v] of Object.entries(def.attrs)) el.setAttribute(k, v); copy.append(el); }
+		return copy;
+	})();
 }

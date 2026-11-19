@@ -15,6 +15,7 @@ export class TabFlowStore {
 	state: TabFlowState = createEmptyState();
 	readOnly = false;
 	private listeners = new Set<() => void>();
+	private saveTimer: any = null;
 
 	subscribe(fn: () => void): () => void {
 		this.listeners.add(fn);
@@ -68,10 +69,20 @@ export class TabFlowStore {
 	}
 
 	save(emit = true): void {
+		if (this.saveTimer !== null) { (globalThis as any).clearTimeout?.(this.saveTimer); this.saveTimer = null; }
 		if (this.readOnly) return;
 		Zotero.Prefs.set(STATE_PREF, JSON.stringify(this.state), true);
 		if (emit) this.notify();
 	}
+
+	scheduleSave(delayMs = 1200): void {
+		if (this.readOnly || this.saveTimer !== null) return;
+		const st = (globalThis as any).setTimeout;
+		if (typeof st !== 'function' || delayMs <= 0) { this.save(false); return; }
+		this.saveTimer = st(() => { this.saveTimer = null; this.save(false); }, delayMs);
+	}
+
+	flushPendingSave(): void { if (this.saveTimer !== null) this.save(false); }
 
 	clearAll(): void { this.readOnly = false; this.state = createEmptyState(); this.save(true); }
 
@@ -303,11 +314,11 @@ export class TabFlowStore {
 
 	saveRollingSnapshot(openKeys: string[]): TabSessionSnapshot | null {
 		if (this.readOnly || !getPref('enableSessions') || !getPref('enableRollingSnapshots')) return null;
-		pruneHistory(this.state, openKeys);
+		const pruned = pruneHistory(this.state, openKeys);
 		const stamp = formatSnapshotTimestamp(Date.now());
 		const label = `${t('zotero-tabflow-rolling-prefix', '自动快照')} · ${stamp}`;
 		const snapshot = buildSessionSnapshot(this.state, label, openKeys, 'rolling');
-		if (!appendRollingSnapshot(this.state, snapshot)) return null;
+		if (!appendRollingSnapshot(this.state, snapshot)) { if (pruned > 0) this.scheduleSave(); return null; }
 		this.save(false);
 		return snapshot;
 	}

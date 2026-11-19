@@ -3,6 +3,7 @@
 (() => {
   // src/core/i18n.ts
   var syncBundle = null;
+  var staticCache = /* @__PURE__ */ new Map();
   function getBundle() {
     if (syncBundle) return syncBundle;
     const L10n = globalThis.Localization;
@@ -16,9 +17,13 @@
     return syncBundle;
   }
   function t(id, fallback, args) {
+    if (!args && staticCache.has(id)) return staticCache.get(id);
     try {
       const val = getBundle()?.formatValueSync?.(id, args);
-      if (typeof val === "string" && val.trim()) return val;
+      if (typeof val === "string" && val.trim()) {
+        if (!args && staticCache.size < 400) staticCache.set(id, val);
+        return val;
+      }
     } catch {
     }
     if (!args) return fallback;
@@ -64,16 +69,19 @@
     enableReloadTab: true,
     debug: false
   };
+  var prefCacheEnabled = false;
+  var prefCache = /* @__PURE__ */ new Map();
   function getPref(key) {
+    if (prefCacheEnabled && prefCache.has(key)) return prefCache.get(key);
     const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
     const fallback = DEFAULT_PREFS[key];
-    if (typeof raw !== typeof fallback) return fallback;
+    let val = typeof raw !== typeof fallback ? fallback : raw;
     const range = NUMERIC_RANGES[key];
     if (range && typeof raw === "number") {
-      if (!Number.isFinite(raw)) return fallback;
-      return Math.max(range[0], Math.min(range[1], Math.trunc(raw)));
+      val = Number.isFinite(raw) ? Math.max(range[0], Math.min(range[1], Math.trunc(raw))) : fallback;
     }
-    return raw;
+    if (prefCacheEnabled) prefCache.set(key, val);
+    return val;
   }
   var NUMERIC_RANGES = {
     verticalSidebarWidth: [200, 440],
@@ -84,6 +92,7 @@
     staleSuggestDays: [1, 3650]
   };
   function resetAllPrefs() {
+    prefCache.clear();
     for (const [key, value] of Object.entries(DEFAULT_PREFS)) {
       Zotero.Prefs.set(PREF_PREFIX + key, value, true);
     }

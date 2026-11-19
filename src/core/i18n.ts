@@ -1,4 +1,7 @@
 let syncBundle: { formatValueSync?: (id: string, args?: Record<string, string | number>) => string | null } | null = null;
+const staticCache = new Map<string, string>();
+
+export function resetI18nCache(): void { staticCache.clear(); syncBundle = null; }
 
 function getBundle() {
 	if (syncBundle) return syncBundle;
@@ -14,9 +17,13 @@ function getBundle() {
 }
 
 export function t(id: string, fallback: string, args?: Record<string, string | number>): string {
+	if (!args && staticCache.has(id)) return staticCache.get(id)!;
 	try {
 		const val = getBundle()?.formatValueSync?.(id, args);
-		if (typeof val === 'string' && val.trim()) return val;
+		if (typeof val === 'string' && val.trim()) {
+			if (!args && staticCache.size < 400) staticCache.set(id, val);
+			return val;
+		}
 	} catch {
 		// Fall back when Fluent bundle is unavailable (e.g. unit tests)
 	}

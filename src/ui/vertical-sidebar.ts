@@ -29,6 +29,7 @@ export class VerticalSidebarController {
 	private groupSections = new Map<string, GroupSection>();
 	private collapsedSections = new Set<string>();
 	private stopResize: (() => void) | null = null;
+	private lastStyleSig = ''; private searchTimer: number | null = null;
 
 	constructor(
 		private readonly win: Window,
@@ -102,7 +103,11 @@ export class VerticalSidebarController {
 		const search = this.h('input', 'ztf-sb-search');
 		search.type = 'search';
 		search.placeholder = t('zotero-tabflow-sidebar-search-placeholder', '过滤标题、备注、集合…');
-		search.oninput = () => this.renderList();
+		search.oninput = () => {
+			if (this.searchTimer !== null) { this.win.clearTimeout(this.searchTimer); this.searchTimer = null; }
+			if (!search.value.trim()) { this.renderList(); return; }
+			this.searchTimer = this.win.setTimeout(() => { this.searchTimer = null; this.renderList(); }, 60);
+		};
 		searchWrap.append(search);
 
 		const views = this.h('div', 'ztf-sb-views ztf-sb-hide-collapsed');
@@ -175,16 +180,21 @@ export class VerticalSidebarController {
 		const collapsed = getPref('verticalSidebarCollapsed');
 		if (!enabled || collapsed) {
 			for (const group of this.groupSections.values()) group.pause();
-		}
-		this.sidebar.hidden = !enabled || collapsed;
-		this.sidebar.classList.toggle('collapsed', collapsed);
-		if (!enabled || collapsed) {
+			this.sidebar.hidden = true;
+			this.sidebar.classList.toggle('collapsed', collapsed);
 			return;
 		}
+		this.sidebar.hidden = false;
+		this.sidebar.classList.remove('collapsed');
 
-		this.sidebar.style.setProperty('--ztf-sb-width', `${getPref('verticalSidebarWidth')}px`);
-		this.sidebar.style.setProperty('--ztf-row-height', `${getPref('verticalTabRowHeight')}px`);
-		this.sidebar.style.setProperty('--ztf-font-size', `${getPref('verticalTabFontSize')}px`);
+		const sbW = getPref('verticalSidebarWidth'), rowH = getPref('verticalTabRowHeight'), fontSz = getPref('verticalTabFontSize');
+		const styleSig = `${sbW}|${rowH}|${fontSz}`;
+		if (this.lastStyleSig !== styleSig) {
+			this.lastStyleSig = styleSig;
+			this.sidebar.style.setProperty('--ztf-sb-width', `${sbW}px`);
+			this.sidebar.style.setProperty('--ztf-row-height', `${rowH}px`);
+			this.sidebar.style.setProperty('--ztf-font-size', `${fontSz}px`);
+		}
 		this.renderList(tracked);
 	}
 
@@ -283,16 +293,11 @@ export class VerticalSidebarController {
 			this.clearGroupSections();
 			this.listEl.replaceChildren();
 			renderSidebarEmptyState(
-				this.doc,
-				this.listEl,
-				Boolean(q),
+				this.doc, this.listEl, Boolean(q),
 				Boolean(this.store.state.sessions.length || this.store.state.rollingSessions?.length),
 				() => { if (this.searchInput) { this.searchInput.value = ''; this.renderList(); } },
 				() => this.onRestoreLastSession?.(),
-				() => {
-					const lib = (this.win as any).Zotero_Tabs?._tabs?.find((x: { type: string }) => x.type === 'library');
-					if (lib) (this.win as any).Zotero_Tabs?.select?.(lib.id);
-				},
+				() => { const lib = (this.win as any).Zotero_Tabs?._tabs?.find((x: { type: string }) => x.type === 'library'); if (lib) (this.win as any).Zotero_Tabs?.select?.(lib.id); },
 			);
 		}
 		this.selection?.updateControls();
@@ -344,8 +349,8 @@ export class VerticalSidebarController {
 	private clearGroupSections(): void { for (const section of this.groupSections.values()) section.dispose(); this.groupSections.clear(); }
 
 	dispose(): void {
-		this.stopResize?.();
-		this.clearGroupSections();
+		if (this.searchTimer !== null) { this.win.clearTimeout(this.searchTimer); this.searchTimer = null; }
+		this.stopResize?.(); this.lastStyleSig = ''; this.clearGroupSections();
 		if (this.ownsHoverCard) this.hoverCard.dispose();
 		this.sidebar?.remove();
 		this.sidebar = null; this.listEl = null; this.statusEl = null; this.selection = null; this.searchInput = null;

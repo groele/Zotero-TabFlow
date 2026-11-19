@@ -181,28 +181,25 @@ export class SpotlightController {
 				const gid = this.store.groupOfKey(m.key);
 				if (openKeys.has(m.key) || hiddenIds.has(gid) || !matches(`${this.store.getRemark(m.key).note} ${m.title} ${m.shortTitle} ${m.filename} ${m.collection} ${m.creatorYear} ${names.get(gid) ?? ''}`)) return [];
 				const r = getPref('enableTabRemarks') ? this.store.getRemark(m.key).note : '';
-				return [{
-					label: `◌ ${r || m.title}`,
-					hint: `${names.get(gid) || t('zotero-tabflow-ungrouped', '未分组')} · ${t('zotero-tabflow-spot-virtual-hint', '虚拟保留')}`,
-					run: () => void this.actions.openVirtualOrItem(m.itemID, gid, false, m.key).then((opened) => {
-						if (!opened) Services.prompt.alert(this.win, m.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。'));
-						this.onRefresh();
-					}),
-				}];
+				return [{ label: `◌ ${r || m.title}`, hint: `${names.get(gid) || t('zotero-tabflow-ungrouped', '未分组')} · ${t('zotero-tabflow-spot-virtual-hint', '虚拟保留')}`, run: () => void this.actions.openVirtualOrItem(m.itemID, gid, false, m.key).then((ok) => { if (!ok) Services.prompt.alert(this.win, m.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。')); this.onRefresh(); }) }];
 			});
 		const allTabEntries = [...tabEntries, ...visibleVirtuals];
-		const openItemIds = new Set(tabs.flatMap((tab) => [tab.itemID, tab.parentItemID]));
-		const libraryEntries: SpotEntry[] = !libMode || !terms.length ? [] : this.libraryCache
-			.filter((it) => !openKeys.has(it.fullKey) && !openItemIds.has(it.id) && matches(it.searchText))
-			.slice(0, 6)
-			.map((it) => ({
-				label: `📖 ${it.title}`,
-				hint: it.metaHint || t('zotero-tabflow-spot-hint-library', '文献库 · 打开'),
-				run: () => void this.actions.openVirtualOrItem(it.id).then(async (opened) => {
-					if (!opened) await (this.win as any).ZoteroPane?.selectItem?.(it.id);
-					this.onRefresh();
-				}).catch((error) => Zotero.logError(error)),
-			}));
+		const libraryEntries: SpotEntry[] = [];
+		if (libMode && terms.length) {
+			const openItemIds = new Set(tabs.flatMap((tab) => [tab.itemID, tab.parentItemID]));
+			const libHintFallback = t('zotero-tabflow-spot-hint-library', '文献库 · 打开');
+			for (const it of this.libraryCache) {
+				if (openKeys.has(it.fullKey) || openItemIds.has(it.id) || !terms.every((term) => it.searchText.includes(term))) continue;
+				libraryEntries.push({
+					label: `📖 ${it.title}`, hint: it.metaHint || libHintFallback,
+					run: () => void this.actions.openVirtualOrItem(it.id).then(async (opened) => {
+						if (!opened) await (this.win as any).ZoteroPane?.selectItem?.(it.id);
+						this.onRefresh();
+					}).catch((error) => Zotero.logError(error)),
+				});
+				if (libraryEntries.length >= 6) break;
+			}
+		}
 
 		const selectedID = this.meta.getSelectedTabID();
 		const activeTab = tabs.find((tab) => tab.tab.id === selectedID);

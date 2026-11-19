@@ -401,3 +401,69 @@ test('saving incrementally overwrites same workspace session (including legacy H
 	assert.deepEqual(refreshed.openKeys, ['1:G1', '1:G1B']);
 	assert.equal(refreshed.scopedGroupId, g1.id);
 });
+
+test('performance caches: pref cache invalidates cleanly, scheduleSave coalesces and flushes, and ItemMetadataService invalidates on dateModified', () => {
+	const { enablePrefCache, invalidatePrefCache } = require('../src/core/prefs.ts');
+	const { createSvgIcon } = require('../src/ui/icons.ts');
+	const { prefs, items, store, tabs, meta } = fixture();
+	let prefReads = 0;
+	globalThis.Zotero.Prefs = {
+		get: (k) => { prefReads++; return prefs.get(k); },
+		set: (k, v) => prefs.set(k, v),
+	};
+	try {
+		enablePrefCache(true);
+		assert.equal(getPref('enableTabRemarks'), true);
+		assert.equal(getPref('enableTabRemarks'), true);
+		assert.equal(prefReads, 1);
+		prefs.set('extensions.zotero.tabflow.enableTabRemarks', false);
+		assert.equal(getPref('enableTabRemarks'), true);
+		invalidatePrefCache('enableTabRemarks');
+		assert.equal(getPref('enableTabRemarks'), false);
+		assert.equal(prefReads, 2);
+	} finally {
+		enablePrefCache(false);
+	}
+
+	// scheduleSave coalesces rapid writes and flushPendingSave clears the timer synchronously
+	let stateWrites = 0;
+	const origSet = globalThis.Zotero.Prefs.set;
+	globalThis.Zotero.Prefs.set = (k, v) => { if (k.endsWith('.state')) stateWrites++; origSet(k, v); };
+	store.scheduleSave(500);
+	store.scheduleSave(500);
+	assert.equal(stateWrites, 0);
+	store.flushPendingSave();
+	assert.equal(stateWrites, 1);
+
+	// ItemMetadataService caches primary fields by dateModified and refreshes when modified
+	let fieldCalls = 0;
+	let titleVal = 'Initial <i>Title</i>';
+	let modStamp = '2026-11-19 10:00:00';
+	items.set(1, {
+		id: 1, libraryID: 1, key: 'P1',
+		get dateModified() { return modStamp; },
+		getField: (f) => { if (f === 'title') { fieldCalls++; return titleVal; } return ''; },
+		getCreators: () => [{ lastName: 'Li' }],
+		getCollections: () => [],
+	});
+	tabs._tabs.push({ id: 't1', type: 'reader', data: { itemID: 1 } });
+	assert.equal(meta.buildTrackedTabs()[0].title, 'Initial Title');
+	assert.equal(meta.buildTrackedTabs()[0].title, 'Initial Title');
+	assert.equal(fieldCalls, 1);
+	titleVal = 'Updated Title';
+	modStamp = '2026-11-19 10:05:00';
+	assert.equal(meta.buildTrackedTabs()[0].title, 'Updated Title');
+	assert.equal(fieldCalls, 2);
+
+	// SVG prototype cache clones icons cleanly without rebuilding attributes every call
+	let clones = 0;
+	const mkSvg = () => ({
+		setAttribute() {}, classList: { add() {} }, append() {},
+		cloneNode() { clones++; return { cloned: true }; },
+	});
+	const doc = { createElementNS: () => mkSvg() };
+	createSvgIcon(doc, 'pin', 12);
+	const cloned = createSvgIcon(doc, 'pin', 12);
+	assert.equal(clones, 2);
+	assert.deepEqual(cloned, { cloned: true });
+});

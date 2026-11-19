@@ -42,23 +42,32 @@ export function renderPinnedStrip(
 	actions: TabActionService,
 	menus: TabContextMenuController,
 ): void {
-	strip.replaceChildren();
-	strip.hidden = pinnedTabs.length === 0;
-	if (!pinnedTabs.length) return;
-
+	if (!pinnedTabs.length) {
+		if (!strip.hidden) strip.replaceChildren();
+		strip.hidden = true;
+		if (strip.dataset) strip.dataset.ztfSig = '';
+		return;
+	}
+	strip.hidden = false;
 	const iconOnly = getPref('pinnedIconOnly');
-	const approxChipWidth = (tab: TrackedTab): number => {
+	const showRemarks = getPref('enableTabRemarks');
+	const remarks = pinnedTabs.map((tab) => (showRemarks ? store.getRemark(tab.key).note : ''));
+	const approxChipWidth = (tab: TrackedTab, index: number): number => {
 		if (iconOnly) return 28;
-		const label = store.getRemark(tab.key).note || tab.shortTitle || tab.title;
+		const label = remarks[index] || tab.shortTitle || tab.title;
 		return Math.min(116, Math.max(52, label.length * 7 + 30));
 	};
 	const hostWidth = strip.parentElement?.clientWidth || 900;
 	const maxWidth = Math.max(160, Math.floor(hostWidth * 0.36));
 	const visibleCount = partitionPinnedOverflow(pinnedTabs.map(approxChipWidth), maxWidth);
+	const sig = `${selectedID}|${iconOnly}|${maxWidth}|${visibleCount}|${pinnedTabs.map((t, i) => `${t.key}:${remarks[i] || t.shortTitle || t.title}`).join(',')}`;
+	if (strip.dataset?.ztfSig === sig) return;
+	if (strip.dataset) strip.dataset.ztfSig = sig;
+	strip.replaceChildren();
 	const visible = pinnedTabs.slice(0, visibleCount);
 	const overflow = pinnedTabs.slice(visibleCount);
 
-	for (const tab of visible) {
+	visible.forEach((tab, idx) => {
 		const chip = doc.createElementNS(XHTML, 'button') as HTMLButtonElement;
 		chip.type = 'button';
 		chip.className = `ztf-pinned-chip${tab.tab.id === selectedID ? ' selected' : ''}${iconOnly ? ' icon-only' : ''}`;
@@ -66,14 +75,13 @@ export function renderPinnedStrip(
 		chip.append(createSvgIcon(doc, 'pin', 12));
 		if (!iconOnly) {
 			const span = doc.createElementNS(XHTML, 'span');
-			const remark = getPref('enableTabRemarks') ? store.getRemark(tab.key).note : '';
-			span.textContent = remark || tab.shortTitle || tab.title;
+			span.textContent = remarks[idx] || tab.shortTitle || tab.title;
 			chip.append(span);
 		}
 		chip.onclick = () => actions.selectTab(tab.tab.id);
 		chip.oncontextmenu = (e: Event) => menus.openTabMenu(e as MouseEvent, tab);
 		strip.append(chip);
-	}
+	});
 
 	if (overflow.length) {
 		const moreBtn = doc.createElementNS(XHTML, 'button') as HTMLButtonElement;

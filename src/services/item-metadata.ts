@@ -7,9 +7,21 @@ export function uncategorizedCollectionLabel(): string {
 	return t('zotero-tabflow-uncategorized-collection', '未分类集合');
 }
 
+interface CachedItemFields {
+	stamp: string;
+	title: string;
+	shortTitle: string;
+	source: string;
+	creatorYear: string;
+}
+
+const MAX_CACHE_ENTRIES = 600;
+
 export class ItemMetadataService {
 	private readonly win: Window;
 	private readonly store: TabFlowStore;
+	private readonly titleCache = new Map<string, string>();
+	private readonly itemFields = new Map<number, CachedItemFields>();
 
 	constructor(win: Window, store: TabFlowStore) {
 		this.win = win;
@@ -39,8 +51,7 @@ export class ItemMetadataService {
 		return item.parentItemID ? Zotero.Items.get(item.parentItemID) || item : item;
 	}
 
-	resolveCollectionName(item: any): string {
-		const uncategorized = uncategorizedCollectionLabel();
+	resolveCollectionName(item: any, activeIds?: Set<number>, groupNames?: Set<string>, uncategorized = uncategorizedCollectionLabel()): string {
 		if (!item) return uncategorized;
 		const primary = item.parentItemID ? Zotero.Items.get(item.parentItemID) || item : item;
 		const collectionIDs: number[] = primary.getCollections?.() || [];
@@ -48,19 +59,25 @@ export class ItemMetadataService {
 
 		const strategy = getPref('multiCollectionStrategy');
 		if (strategy === 'active') {
-			const activeCol = (this.win as any).ZoteroPane?.getSelectedCollections?.()?.find(
-				(collection: { id: number }) => collectionIDs.includes(collection.id),
-			);
-			if (activeCol) {
-				return String(activeCol.name || uncategorized);
+			if (activeIds) {
+				for (const cid of collectionIDs) {
+					if (activeIds.has(cid)) {
+						const col = Zotero.Collections.get(cid);
+						if (col) return String(col.name || uncategorized);
+					}
+				}
+			} else {
+				const activeCol = (this.win as any).ZoteroPane?.getSelectedCollections?.()?.find(
+					(collection: { id: number }) => collectionIDs.includes(collection.id),
+				);
+				if (activeCol) return String(activeCol.name || uncategorized);
 			}
 		}
 		if (strategy === 'existing') {
+			const names = groupNames ?? new Set(this.store.state.groups.map((g) => g.name));
 			for (const cid of collectionIDs) {
 				const col = Zotero.Collections.get(cid);
-				if (col && this.store.state.groups.some((g) => g.name === col.name)) {
-					return String(col.name);
-				}
+				if (col && names.has(col.name)) return String(col.name);
 			}
 		}
 		const first = Zotero.Collections.get(collectionIDs[0]);
@@ -68,21 +85,62 @@ export class ItemMetadataService {
 	}
 
 	plainTitle(value: string): string {
+		const cached = this.titleCache.get(value);
+		if (cached !== undefined) return cached;
 		const render = (Zotero.Utilities as any)?.Internal?.renderItemTitle;
-		if (typeof render !== 'function') return value.replace(/<[^>]*>/g, '');
-		const rendered = render.call((Zotero.Utilities as any).Internal, value);
-		const text = typeof rendered === 'string' ? rendered : String(rendered?.textContent ?? value);
-		return text.replace(/<[^>]*>/g, '');
+		let out: string;
+		if (typeof render !== 'function') {
+			out = value.replace(/<[^>]*>/g, '');
+		} else {
+			const rendered = render.call((Zotero.Utilities as any).Internal, value);
+			const text = typeof rendered === 'string' ? rendered : String(rendered?.textContent ?? value);
+			out = text.replace(/<[^>]*>/g, '');
+		}
+		if (this.titleCache.size >= MAX_CACHE_ENTRIES) this.titleCache.clear();
+		this.titleCache.set(value, out);
+		return out;
+	}
+
+	private extractPrimaryFields(primary: any, fallbackTitle: string): CachedItemFields {
+		const stamp = typeof primary?.dateModified === 'string' ? primary.dateModified : '';
+		const id = typeof primary?.id === 'number' ? primary.id : 0;
+		const hit = id && stamp ? this.itemFields.get(id) : undefined;
+		if (hit && hit.stamp === stamp) return hit;
+
+		const title = this.plainTitle(String(primary?.getField?.('title') || fallbackTitle));
+		const shortTitle = this.plainTitle(String(primary?.getField?.('shortTitle') || title));
+		const source = String(
+			primary?.getField?.('publicationTitle') ||
+			primary?.getField?.('proceedingsTitle') ||
+			primary?.getField?.('bookTitle') ||
+			primary?.getField?.('repository') || '',
+		);
+		const creators = primary?.getCreators?.() || [];
+		const firstAuthor = creators[0]?.lastName || creators[0]?.firstName || '';
+		const year = String(primary?.getField?.('year') || '').slice(0, 4);
+		const fields: CachedItemFields = { stamp, title, shortTitle, source, creatorYear: [firstAuthor, year].filter(Boolean).join(', ') };
+		if (id && stamp) {
+			if (this.itemFields.size >= MAX_CACHE_ENTRIES) this.itemFields.clear();
+			this.itemFields.set(id, fields);
+		}
+		return fields;
 	}
 
 	buildTrackedTabs(): TrackedTab[] {
 		const enablePinned = getPref('enablePinnedTabs');
 		const enableSleep = getPref('enableTabSleep');
+		const strategy = getPref('multiCollectionStrategy');
 		const { assignments, groups, pinned, sleeping } = this.store.state;
 		const groupIds = new Set(groups.map((group) => group.id));
+		const groupNames = strategy === 'existing' ? new Set(groups.map((group) => group.name)) : undefined;
+		const activeColIds = strategy === 'active'
+			? new Set<number>(((this.win as any).ZoteroPane?.getSelectedCollections?.() || []).map((c: { id: number }) => c.id))
+			: undefined;
+		const uncategorized = uncategorizedCollectionLabel();
 		const pinnedKeys = new Set(enablePinned ? pinned : []);
 		const sleepingKeys = new Set(enableSleep ? sleeping : []);
 		const collections = new Map<number, string>();
+		const untitled = t('zotero-tabflow-untitled', '无标题');
 		return this.getNativeTabs()
 			.filter((t) => t.type !== 'library')
 			.map((tab) => {
@@ -90,21 +148,9 @@ export class ItemMetadataService {
 				const rawItem: any = itemID ? Zotero.Items.get(itemID) : null;
 				const key = rawItem ? `${rawItem.libraryID}:${rawItem.key}` : `tab:${tab.id}`;
 				const primary = rawItem?.parentItemID ? Zotero.Items.get(rawItem.parentItemID) || rawItem : rawItem;
-				const title = this.plainTitle(String(primary?.getField?.('title') || tab.title || t('zotero-tabflow-untitled', '无标题')));
-				const shortTitle = this.plainTitle(String(primary?.getField?.('shortTitle') || title));
-				const filename = String(rawItem?.isAttachment?.() ? rawItem.attachmentFilename || title : title);
-				const source = String(
-					primary?.getField?.('publicationTitle') ||
-						primary?.getField?.('proceedingsTitle') ||
-						primary?.getField?.('bookTitle') ||
-						primary?.getField?.('repository') ||
-						'',
-				);
-				const creators = primary?.getCreators?.() || [];
-				const firstAuthor = creators[0]?.lastName || creators[0]?.firstName || '';
-				const year = String(primary?.getField?.('year') || '').slice(0, 4);
-				const creatorYear = [firstAuthor, year].filter(Boolean).join(', ');
-				const collection = collections.get(primary?.id) ?? this.resolveCollectionName(primary);
+				const fields = this.extractPrimaryFields(primary, tab.title || untitled);
+				const filename = String(rawItem?.isAttachment?.() ? rawItem.attachmentFilename || fields.title : fields.title);
+				const collection = collections.get(primary?.id) ?? this.resolveCollectionName(primary, activeColIds, groupNames, uncategorized);
 				if (primary) collections.set(primary.id, collection);
 				const reader = sleepingKeys.has(key) ? (Zotero.Reader as any)?.getByTabID?.(tab.id) : null;
 				const hostLoaded = Boolean(reader && reader.initialized !== false && !(tab.data as any)?.unloaded);
@@ -113,11 +159,11 @@ export class ItemMetadataService {
 					key,
 					itemID,
 					parentItemID: primary?.id ?? null,
-					title,
-					shortTitle,
+					title: fields.title,
+					shortTitle: fields.shortTitle,
 					filename,
-					source,
-					creatorYear,
+					source: fields.source,
+					creatorYear: fields.creatorYear,
 					collection,
 					groupId: groupIds.has(assignments[key]) ? assignments[key] : '',
 					pinned: pinnedKeys.has(key),

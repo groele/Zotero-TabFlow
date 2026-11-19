@@ -1,6 +1,39 @@
 /* Zotero TabFlow - Unified horizontal & vertical tab workspace for Zotero 10-12. */
 "use strict";
 (() => {
+  // src/core/i18n.ts
+  var syncBundle = null;
+  var staticCache = /* @__PURE__ */ new Map();
+  function resetI18nCache() {
+    staticCache.clear();
+    syncBundle = null;
+  }
+  function getBundle() {
+    if (syncBundle) return syncBundle;
+    const L10n = globalThis.Localization;
+    if (typeof L10n === "function") {
+      try {
+        syncBundle = new L10n(["zotero-tabflow.ftl"], true);
+      } catch {
+        syncBundle = null;
+      }
+    }
+    return syncBundle;
+  }
+  function t(id, fallback, args) {
+    if (!args && staticCache.has(id)) return staticCache.get(id);
+    try {
+      const val = getBundle()?.formatValueSync?.(id, args);
+      if (typeof val === "string" && val.trim()) {
+        if (!args && staticCache.size < 400) staticCache.set(id, val);
+        return val;
+      }
+    } catch {
+    }
+    if (!args) return fallback;
+    return fallback.replace(/\{\s*\$([a-zA-Z0-9_]+)\s*\}/g, (_m, k) => String(args[k] ?? ""));
+  }
+
   // src/core/prefs.ts
   var PREF_PREFIX = "extensions.zotero.tabflow.";
   var DEFAULT_PREFS = {
@@ -40,16 +73,27 @@
     enableReloadTab: true,
     debug: false
   };
+  var prefCacheEnabled = false;
+  var prefCache = /* @__PURE__ */ new Map();
+  function enablePrefCache(active) {
+    prefCacheEnabled = active;
+    prefCache.clear();
+  }
+  function invalidatePrefCache(key) {
+    if (key) prefCache.delete(key);
+    else prefCache.clear();
+  }
   function getPref(key) {
+    if (prefCacheEnabled && prefCache.has(key)) return prefCache.get(key);
     const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
     const fallback = DEFAULT_PREFS[key];
-    if (typeof raw !== typeof fallback) return fallback;
+    let val = typeof raw !== typeof fallback ? fallback : raw;
     const range = NUMERIC_RANGES[key];
     if (range && typeof raw === "number") {
-      if (!Number.isFinite(raw)) return fallback;
-      return Math.max(range[0], Math.min(range[1], Math.trunc(raw)));
+      val = Number.isFinite(raw) ? Math.max(range[0], Math.min(range[1], Math.trunc(raw))) : fallback;
     }
-    return raw;
+    if (prefCacheEnabled) prefCache.set(key, val);
+    return val;
   }
   var NUMERIC_RANGES = {
     verticalSidebarWidth: [200, 440],
@@ -60,6 +104,7 @@
     staleSuggestDays: [1, 3650]
   };
   function setPref(key, value) {
+    prefCache.delete(key);
     Zotero.Prefs.set(PREF_PREFIX + key, value, true);
   }
 
@@ -70,30 +115,6 @@
       return `#${[...hex].map((c) => c + c).join("").toLowerCase()}`;
     }
     return /^[0-9a-f]{6}$/i.test(hex) ? `#${hex.toLowerCase()}` : null;
-  }
-
-  // src/core/i18n.ts
-  var syncBundle = null;
-  function getBundle() {
-    if (syncBundle) return syncBundle;
-    const L10n = globalThis.Localization;
-    if (typeof L10n === "function") {
-      try {
-        syncBundle = new L10n(["zotero-tabflow.ftl"], true);
-      } catch {
-        syncBundle = null;
-      }
-    }
-    return syncBundle;
-  }
-  function t(id, fallback, args) {
-    try {
-      const val = getBundle()?.formatValueSync?.(id, args);
-      if (typeof val === "string" && val.trim()) return val;
-    } catch {
-    }
-    if (!args) return fallback;
-    return fallback.replace(/\{\s*\$([a-zA-Z0-9_]+)\s*\}/g, (_m, k) => String(args[k] ?? ""));
   }
 
   // src/core/session-store.ts
@@ -361,6 +382,7 @@
     state = createEmptyState();
     readOnly = false;
     listeners = /* @__PURE__ */ new Set();
+    saveTimer = null;
     subscribe(fn) {
       this.listeners.add(fn);
       return () => this.listeners.delete(fn);
@@ -410,9 +432,28 @@
       }
     }
     save(emit = true) {
+      if (this.saveTimer !== null) {
+        globalThis.clearTimeout?.(this.saveTimer);
+        this.saveTimer = null;
+      }
       if (this.readOnly) return;
       Zotero.Prefs.set(STATE_PREF, JSON.stringify(this.state), true);
       if (emit) this.notify();
+    }
+    scheduleSave(delayMs = 1200) {
+      if (this.readOnly || this.saveTimer !== null) return;
+      const st = globalThis.setTimeout;
+      if (typeof st !== "function" || delayMs <= 0) {
+        this.save(false);
+        return;
+      }
+      this.saveTimer = st(() => {
+        this.saveTimer = null;
+        this.save(false);
+      }, delayMs);
+    }
+    flushPendingSave() {
+      if (this.saveTimer !== null) this.save(false);
     }
     clearAll() {
       this.readOnly = false;
@@ -643,11 +684,14 @@
     }
     saveRollingSnapshot(openKeys) {
       if (this.readOnly || !getPref("enableSessions") || !getPref("enableRollingSnapshots")) return null;
-      pruneHistory(this.state, openKeys);
+      const pruned = pruneHistory(this.state, openKeys);
       const stamp = formatSnapshotTimestamp(Date.now());
       const label = `${t("zotero-tabflow-rolling-prefix", "自动快照")} · ${stamp}`;
       const snapshot = buildSessionSnapshot(this.state, label, openKeys, "rolling");
-      if (!appendRollingSnapshot(this.state, snapshot)) return null;
+      if (!appendRollingSnapshot(this.state, snapshot)) {
+        if (pruned > 0) this.scheduleSave();
+        return null;
+      }
       this.save(false);
       return snapshot;
     }
@@ -704,7 +748,7 @@
           changed = true;
         }
       }
-      if (changed) this.store.save(false);
+      if (changed) this.store.scheduleSave();
       return selectedID;
     }
     getStaleTabs(now = Date.now(), tracked) {
@@ -737,9 +781,12 @@
   function uncategorizedCollectionLabel() {
     return t("zotero-tabflow-uncategorized-collection", "未分类集合");
   }
+  var MAX_CACHE_ENTRIES = 600;
   var ItemMetadataService = class {
     win;
     store;
+    titleCache = /* @__PURE__ */ new Map();
+    itemFields = /* @__PURE__ */ new Map();
     constructor(win, store) {
       this.win = win;
       this.store = store;
@@ -763,63 +810,94 @@
       if (!item) return null;
       return item.parentItemID ? Zotero.Items.get(item.parentItemID) || item : item;
     }
-    resolveCollectionName(item) {
-      const uncategorized = uncategorizedCollectionLabel();
+    resolveCollectionName(item, activeIds, groupNames, uncategorized = uncategorizedCollectionLabel()) {
       if (!item) return uncategorized;
       const primary = item.parentItemID ? Zotero.Items.get(item.parentItemID) || item : item;
       const collectionIDs = primary.getCollections?.() || [];
       if (!collectionIDs.length) return uncategorized;
       const strategy = getPref("multiCollectionStrategy");
       if (strategy === "active") {
-        const activeCol = this.win.ZoteroPane?.getSelectedCollections?.()?.find(
-          (collection) => collectionIDs.includes(collection.id)
-        );
-        if (activeCol) {
-          return String(activeCol.name || uncategorized);
+        if (activeIds) {
+          for (const cid of collectionIDs) {
+            if (activeIds.has(cid)) {
+              const col = Zotero.Collections.get(cid);
+              if (col) return String(col.name || uncategorized);
+            }
+          }
+        } else {
+          const activeCol = this.win.ZoteroPane?.getSelectedCollections?.()?.find(
+            (collection) => collectionIDs.includes(collection.id)
+          );
+          if (activeCol) return String(activeCol.name || uncategorized);
         }
       }
       if (strategy === "existing") {
+        const names = groupNames ?? new Set(this.store.state.groups.map((g) => g.name));
         for (const cid of collectionIDs) {
           const col = Zotero.Collections.get(cid);
-          if (col && this.store.state.groups.some((g) => g.name === col.name)) {
-            return String(col.name);
-          }
+          if (col && names.has(col.name)) return String(col.name);
         }
       }
       const first = Zotero.Collections.get(collectionIDs[0]);
       return first ? String(first.name) : uncategorized;
     }
     plainTitle(value) {
+      const cached = this.titleCache.get(value);
+      if (cached !== void 0) return cached;
       const render = Zotero.Utilities?.Internal?.renderItemTitle;
-      if (typeof render !== "function") return value.replace(/<[^>]*>/g, "");
-      const rendered = render.call(Zotero.Utilities.Internal, value);
-      const text = typeof rendered === "string" ? rendered : String(rendered?.textContent ?? value);
-      return text.replace(/<[^>]*>/g, "");
+      let out;
+      if (typeof render !== "function") {
+        out = value.replace(/<[^>]*>/g, "");
+      } else {
+        const rendered = render.call(Zotero.Utilities.Internal, value);
+        const text = typeof rendered === "string" ? rendered : String(rendered?.textContent ?? value);
+        out = text.replace(/<[^>]*>/g, "");
+      }
+      if (this.titleCache.size >= MAX_CACHE_ENTRIES) this.titleCache.clear();
+      this.titleCache.set(value, out);
+      return out;
+    }
+    extractPrimaryFields(primary, fallbackTitle) {
+      const stamp = typeof primary?.dateModified === "string" ? primary.dateModified : "";
+      const id = typeof primary?.id === "number" ? primary.id : 0;
+      const hit = id && stamp ? this.itemFields.get(id) : void 0;
+      if (hit && hit.stamp === stamp) return hit;
+      const title = this.plainTitle(String(primary?.getField?.("title") || fallbackTitle));
+      const shortTitle = this.plainTitle(String(primary?.getField?.("shortTitle") || title));
+      const source = String(
+        primary?.getField?.("publicationTitle") || primary?.getField?.("proceedingsTitle") || primary?.getField?.("bookTitle") || primary?.getField?.("repository") || ""
+      );
+      const creators = primary?.getCreators?.() || [];
+      const firstAuthor = creators[0]?.lastName || creators[0]?.firstName || "";
+      const year = String(primary?.getField?.("year") || "").slice(0, 4);
+      const fields = { stamp, title, shortTitle, source, creatorYear: [firstAuthor, year].filter(Boolean).join(", ") };
+      if (id && stamp) {
+        if (this.itemFields.size >= MAX_CACHE_ENTRIES) this.itemFields.clear();
+        this.itemFields.set(id, fields);
+      }
+      return fields;
     }
     buildTrackedTabs() {
       const enablePinned = getPref("enablePinnedTabs");
       const enableSleep = getPref("enableTabSleep");
+      const strategy = getPref("multiCollectionStrategy");
       const { assignments, groups, pinned, sleeping } = this.store.state;
       const groupIds = new Set(groups.map((group) => group.id));
+      const groupNames = strategy === "existing" ? new Set(groups.map((group) => group.name)) : void 0;
+      const activeColIds = strategy === "active" ? new Set((this.win.ZoteroPane?.getSelectedCollections?.() || []).map((c) => c.id)) : void 0;
+      const uncategorized = uncategorizedCollectionLabel();
       const pinnedKeys = new Set(enablePinned ? pinned : []);
       const sleepingKeys = new Set(enableSleep ? sleeping : []);
       const collections = /* @__PURE__ */ new Map();
+      const untitled = t("zotero-tabflow-untitled", "无标题");
       return this.getNativeTabs().filter((t2) => t2.type !== "library").map((tab) => {
         const itemID = typeof tab.data?.itemID === "number" ? tab.data.itemID : null;
         const rawItem = itemID ? Zotero.Items.get(itemID) : null;
         const key = rawItem ? `${rawItem.libraryID}:${rawItem.key}` : `tab:${tab.id}`;
         const primary = rawItem?.parentItemID ? Zotero.Items.get(rawItem.parentItemID) || rawItem : rawItem;
-        const title = this.plainTitle(String(primary?.getField?.("title") || tab.title || t("zotero-tabflow-untitled", "无标题")));
-        const shortTitle = this.plainTitle(String(primary?.getField?.("shortTitle") || title));
-        const filename = String(rawItem?.isAttachment?.() ? rawItem.attachmentFilename || title : title);
-        const source = String(
-          primary?.getField?.("publicationTitle") || primary?.getField?.("proceedingsTitle") || primary?.getField?.("bookTitle") || primary?.getField?.("repository") || ""
-        );
-        const creators = primary?.getCreators?.() || [];
-        const firstAuthor = creators[0]?.lastName || creators[0]?.firstName || "";
-        const year = String(primary?.getField?.("year") || "").slice(0, 4);
-        const creatorYear = [firstAuthor, year].filter(Boolean).join(", ");
-        const collection = collections.get(primary?.id) ?? this.resolveCollectionName(primary);
+        const fields = this.extractPrimaryFields(primary, tab.title || untitled);
+        const filename = String(rawItem?.isAttachment?.() ? rawItem.attachmentFilename || fields.title : fields.title);
+        const collection = collections.get(primary?.id) ?? this.resolveCollectionName(primary, activeColIds, groupNames, uncategorized);
         if (primary) collections.set(primary.id, collection);
         const reader = sleepingKeys.has(key) ? Zotero.Reader?.getByTabID?.(tab.id) : null;
         const hostLoaded = Boolean(reader && reader.initialized !== false && !tab.data?.unloaded);
@@ -828,11 +906,11 @@
           key,
           itemID,
           parentItemID: primary?.id ?? null,
-          title,
-          shortTitle,
+          title: fields.title,
+          shortTitle: fields.shortTitle,
           filename,
-          source,
-          creatorYear,
+          source: fields.source,
+          creatorYear: fields.creatorYear,
           collection,
           groupId: groupIds.has(assignments[key]) ? assignments[key] : "",
           pinned: pinnedKeys.has(key),
@@ -1755,26 +1833,43 @@
       { tag: "path", attrs: { d: "M2.3 6h11.4M9.4 6v7.2" } }
     ]
   };
+  var docIconCache = /* @__PURE__ */ new WeakMap();
   function createSvgIcon(doc, name, size = 14) {
-    const svg = doc.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("viewBox", "0 0 16 16");
-    svg.setAttribute("width", String(size));
-    svg.setAttribute("height", String(size));
-    svg.setAttribute("fill", "none");
-    svg.setAttribute("stroke", "currentColor");
-    svg.setAttribute("stroke-width", "1.35");
-    svg.setAttribute("stroke-linecap", "round");
-    svg.setAttribute("stroke-linejoin", "round");
-    svg.setAttribute("aria-hidden", "true");
-    svg.classList.add("ztf-icon");
-    for (const def of ICONS[name]) {
-      const el = doc.createElementNS(SVG_NS, def.tag);
-      for (const [k, v] of Object.entries(def.attrs)) {
-        el.setAttribute(k, v);
-      }
-      svg.append(el);
+    let cache = docIconCache.get(doc);
+    if (!cache) {
+      cache = /* @__PURE__ */ new Map();
+      docIconCache.set(doc, cache);
     }
-    return svg;
+    const key = `${name}:${size}`;
+    let proto = cache.get(key);
+    if (!proto) {
+      proto = doc.createElementNS(SVG_NS, "svg");
+      proto.setAttribute("viewBox", "0 0 16 16");
+      proto.setAttribute("width", String(size));
+      proto.setAttribute("height", String(size));
+      proto.setAttribute("fill", "none");
+      proto.setAttribute("stroke", "currentColor");
+      proto.setAttribute("stroke-width", "1.35");
+      proto.setAttribute("stroke-linecap", "round");
+      proto.setAttribute("stroke-linejoin", "round");
+      proto.setAttribute("aria-hidden", "true");
+      proto.classList.add("ztf-icon");
+      for (const def of ICONS[name]) {
+        const el = doc.createElementNS(SVG_NS, def.tag);
+        for (const [k, v] of Object.entries(def.attrs)) el.setAttribute(k, v);
+        proto.append(el);
+      }
+      cache.set(key, proto);
+    }
+    return typeof proto.cloneNode === "function" ? proto.cloneNode(true) : (() => {
+      const copy = doc.createElementNS(SVG_NS, "svg");
+      for (const def of ICONS[name]) {
+        const el = doc.createElementNS(SVG_NS, def.tag);
+        for (const [k, v] of Object.entries(def.attrs)) el.setAttribute(k, v);
+        copy.append(el);
+      }
+      return copy;
+    })();
   }
 
   // src/ui/pinned-strip.ts
@@ -1796,21 +1891,31 @@
     return Math.max(1, count);
   }
   function renderPinnedStrip(doc, strip, pinnedTabs, selectedID, store, meta, actions, menus) {
-    strip.replaceChildren();
-    strip.hidden = pinnedTabs.length === 0;
-    if (!pinnedTabs.length) return;
+    if (!pinnedTabs.length) {
+      if (!strip.hidden) strip.replaceChildren();
+      strip.hidden = true;
+      if (strip.dataset) strip.dataset.ztfSig = "";
+      return;
+    }
+    strip.hidden = false;
     const iconOnly = getPref("pinnedIconOnly");
-    const approxChipWidth = (tab) => {
+    const showRemarks = getPref("enableTabRemarks");
+    const remarks = pinnedTabs.map((tab) => showRemarks ? store.getRemark(tab.key).note : "");
+    const approxChipWidth = (tab, index) => {
       if (iconOnly) return 28;
-      const label = store.getRemark(tab.key).note || tab.shortTitle || tab.title;
+      const label = remarks[index] || tab.shortTitle || tab.title;
       return Math.min(116, Math.max(52, label.length * 7 + 30));
     };
     const hostWidth = strip.parentElement?.clientWidth || 900;
     const maxWidth = Math.max(160, Math.floor(hostWidth * 0.36));
     const visibleCount = partitionPinnedOverflow(pinnedTabs.map(approxChipWidth), maxWidth);
+    const sig = `${selectedID}|${iconOnly}|${maxWidth}|${visibleCount}|${pinnedTabs.map((t2, i) => `${t2.key}:${remarks[i] || t2.shortTitle || t2.title}`).join(",")}`;
+    if (strip.dataset?.ztfSig === sig) return;
+    if (strip.dataset) strip.dataset.ztfSig = sig;
+    strip.replaceChildren();
     const visible = pinnedTabs.slice(0, visibleCount);
     const overflow = pinnedTabs.slice(visibleCount);
-    for (const tab of visible) {
+    visible.forEach((tab, idx) => {
       const chip = doc.createElementNS(XHTML2, "button");
       chip.type = "button";
       chip.className = `ztf-pinned-chip${tab.tab.id === selectedID ? " selected" : ""}${iconOnly ? " icon-only" : ""}`;
@@ -1818,14 +1923,13 @@
       chip.append(createSvgIcon(doc, "pin", 12));
       if (!iconOnly) {
         const span = doc.createElementNS(XHTML2, "span");
-        const remark = getPref("enableTabRemarks") ? store.getRemark(tab.key).note : "";
-        span.textContent = remark || tab.shortTitle || tab.title;
+        span.textContent = remarks[idx] || tab.shortTitle || tab.title;
         chip.append(span);
       }
       chip.onclick = () => actions.selectTab(tab.tab.id);
       chip.oncontextmenu = (e) => menus.openTabMenu(e, tab);
       strip.append(chip);
-    }
+    });
     if (overflow.length) {
       const moreBtn = doc.createElementNS(XHTML2, "button");
       moreBtn.type = "button";
@@ -3544,25 +3648,29 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         const gid = this.store.groupOfKey(m.key);
         if (openKeys.has(m.key) || hiddenIds.has(gid) || !matches(`${this.store.getRemark(m.key).note} ${m.title} ${m.shortTitle} ${m.filename} ${m.collection} ${m.creatorYear} ${names.get(gid) ?? ""}`)) return [];
         const r = getPref("enableTabRemarks") ? this.store.getRemark(m.key).note : "";
-        return [{
-          label: `◌ ${r || m.title}`,
-          hint: `${names.get(gid) || t("zotero-tabflow-ungrouped", "未分组")} · ${t("zotero-tabflow-spot-virtual-hint", "虚拟保留")}`,
-          run: () => void this.actions.openVirtualOrItem(m.itemID, gid, false, m.key).then((opened) => {
-            if (!opened) Services.prompt.alert(this.win, m.title, t("zotero-tabflow-spot-hidden-open-failed", "未能打开这篇文献。请检查附件文件是否可用。"));
-            this.onRefresh();
-          })
-        }];
+        return [{ label: `◌ ${r || m.title}`, hint: `${names.get(gid) || t("zotero-tabflow-ungrouped", "未分组")} · ${t("zotero-tabflow-spot-virtual-hint", "虚拟保留")}`, run: () => void this.actions.openVirtualOrItem(m.itemID, gid, false, m.key).then((ok) => {
+          if (!ok) Services.prompt.alert(this.win, m.title, t("zotero-tabflow-spot-hidden-open-failed", "未能打开这篇文献。请检查附件文件是否可用。"));
+          this.onRefresh();
+        }) }];
       });
       const allTabEntries = [...tabEntries, ...visibleVirtuals];
-      const openItemIds = new Set(tabs.flatMap((tab) => [tab.itemID, tab.parentItemID]));
-      const libraryEntries = !libMode || !terms.length ? [] : this.libraryCache.filter((it) => !openKeys.has(it.fullKey) && !openItemIds.has(it.id) && matches(it.searchText)).slice(0, 6).map((it) => ({
-        label: `📖 ${it.title}`,
-        hint: it.metaHint || t("zotero-tabflow-spot-hint-library", "文献库 · 打开"),
-        run: () => void this.actions.openVirtualOrItem(it.id).then(async (opened) => {
-          if (!opened) await this.win.ZoteroPane?.selectItem?.(it.id);
-          this.onRefresh();
-        }).catch((error) => Zotero.logError(error))
-      }));
+      const libraryEntries = [];
+      if (libMode && terms.length) {
+        const openItemIds = new Set(tabs.flatMap((tab) => [tab.itemID, tab.parentItemID]));
+        const libHintFallback = t("zotero-tabflow-spot-hint-library", "文献库 · 打开");
+        for (const it of this.libraryCache) {
+          if (openKeys.has(it.fullKey) || openItemIds.has(it.id) || !terms.every((term) => it.searchText.includes(term))) continue;
+          libraryEntries.push({
+            label: `📖 ${it.title}`,
+            hint: it.metaHint || libHintFallback,
+            run: () => void this.actions.openVirtualOrItem(it.id).then(async (opened) => {
+              if (!opened) await this.win.ZoteroPane?.selectItem?.(it.id);
+              this.onRefresh();
+            }).catch((error) => Zotero.logError(error))
+          });
+          if (libraryEntries.length >= 6) break;
+        }
+      }
       const selectedID = this.meta.getSelectedTabID();
       const activeTab = tabs.find((tab) => tab.tab.id === selectedID);
       const sessionEntries = !getPref("enableSessions") || libMode ? [] : [...this.store.state.sessions, ...this.store.state.rollingSessions ?? []].map((s) => ({
@@ -4410,6 +4518,9 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     };
   }
   function renderSidebarStatusBar(doc, bar, counts, onSleepInactive) {
+    const sig = `${counts.active}|${counts.sleeping}|${counts.virtual}|${counts.overBudget ? counts.budget : 0}`;
+    if (bar.dataset?.ztfSig === sig) return;
+    if (bar.dataset) bar.dataset.ztfSig = sig;
     bar.replaceChildren();
     const summary = doc.createElementNS(XHTML6, "span");
     summary.className = "ztf-sb-status-text";
@@ -4532,6 +4643,8 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     groupSections = /* @__PURE__ */ new Map();
     collapsedSections = /* @__PURE__ */ new Set();
     stopResize = null;
+    lastStyleSig = "";
+    searchTimer = null;
     h(tag, className) {
       const el = this.doc.createElementNS("http://www.w3.org/1999/xhtml", tag);
       if (className) el.className = className;
@@ -4582,7 +4695,20 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       const search = this.h("input", "ztf-sb-search");
       search.type = "search";
       search.placeholder = t("zotero-tabflow-sidebar-search-placeholder", "过滤标题、备注、集合…");
-      search.oninput = () => this.renderList();
+      search.oninput = () => {
+        if (this.searchTimer !== null) {
+          this.win.clearTimeout(this.searchTimer);
+          this.searchTimer = null;
+        }
+        if (!search.value.trim()) {
+          this.renderList();
+          return;
+        }
+        this.searchTimer = this.win.setTimeout(() => {
+          this.searchTimer = null;
+          this.renderList();
+        }, 60);
+      };
       searchWrap.append(search);
       const views = this.h("div", "ztf-sb-views ztf-sb-hide-collapsed");
       for (const [mode, label] of [
@@ -4659,15 +4785,20 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       const collapsed = getPref("verticalSidebarCollapsed");
       if (!enabled || collapsed) {
         for (const group of this.groupSections.values()) group.pause();
-      }
-      this.sidebar.hidden = !enabled || collapsed;
-      this.sidebar.classList.toggle("collapsed", collapsed);
-      if (!enabled || collapsed) {
+        this.sidebar.hidden = true;
+        this.sidebar.classList.toggle("collapsed", collapsed);
         return;
       }
-      this.sidebar.style.setProperty("--ztf-sb-width", `${getPref("verticalSidebarWidth")}px`);
-      this.sidebar.style.setProperty("--ztf-row-height", `${getPref("verticalTabRowHeight")}px`);
-      this.sidebar.style.setProperty("--ztf-font-size", `${getPref("verticalTabFontSize")}px`);
+      this.sidebar.hidden = false;
+      this.sidebar.classList.remove("collapsed");
+      const sbW = getPref("verticalSidebarWidth"), rowH = getPref("verticalTabRowHeight"), fontSz = getPref("verticalTabFontSize");
+      const styleSig = `${sbW}|${rowH}|${fontSz}`;
+      if (this.lastStyleSig !== styleSig) {
+        this.lastStyleSig = styleSig;
+        this.sidebar.style.setProperty("--ztf-sb-width", `${sbW}px`);
+        this.sidebar.style.setProperty("--ztf-row-height", `${rowH}px`);
+        this.sidebar.style.setProperty("--ztf-font-size", `${fontSz}px`);
+      }
       this.renderList(tracked);
     }
     renderList(snapshot) {
@@ -4841,7 +4972,12 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       this.groupSections.clear();
     }
     dispose() {
+      if (this.searchTimer !== null) {
+        this.win.clearTimeout(this.searchTimer);
+        this.searchTimer = null;
+      }
       this.stopResize?.();
+      this.lastStyleSig = "";
       this.clearGroupSections();
       if (this.ownsHoverCard) this.hoverCard.dispose();
       this.sidebar?.remove();
@@ -5245,12 +5381,17 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
     notifierID = null;
     observer = null;
     refreshTimer = null;
+    resizeTimer = null;
     ageTimer = null;
     lastSelected = "";
     disposed = false;
     ageTickCount = 0;
     onResize = () => {
-      this.schedule();
+      if (this.disposed || this.resizeTimer !== null) return;
+      this.resizeTimer = this.win.setTimeout(() => {
+        this.resizeTimer = null;
+        this.schedule();
+      }, 100);
     };
     saveRollingIfNeeded() {
       if (!getPref("enableSessions") || !getPref("enableRollingSnapshots")) return;
@@ -5301,6 +5442,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       const host = doc.getElementById("tab-bar-container");
       if (host) {
         this.observer = new this.win.MutationObserver((records) => {
+          if (this.disposed || this.refreshTimer !== null) return;
           const inline = doc.getElementById("ztf-inline");
           const pinned = doc.querySelector(".ztf-pinned-strip");
           const actionsBar = doc.getElementById("ztf-toolbar-actions");
@@ -5357,8 +5499,10 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
     dispose() {
       this.disposed = true;
       this.win.removeEventListener?.("resize", this.onResize);
+      if (this.resizeTimer !== null) this.win.clearTimeout(this.resizeTimer);
       try {
         this.saveRollingIfNeeded();
+        this.store.flushPendingSave();
       } catch {
       }
       if (this.refreshTimer !== null) this.win.clearTimeout(this.refreshTimer);
@@ -5391,12 +5535,16 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       this.rootURI = info.rootURI;
     }
     start() {
+      enablePrefCache(true);
       this.store.load();
       if (getPref("debug")) Zotero.debug("[TabFlow] Workspace state loaded");
       this.pdfFolderSection.register(this.id, this.rootURI);
       this.unsubscribeStore = this.store.subscribe(() => this.refreshAll());
       this.prefObserverIDs = Object.keys(DEFAULT_PREFS).map(
-        (key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => this.refreshAll(), true)
+        (key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => {
+          invalidatePrefCache(key);
+          this.refreshAll();
+        }, true)
       );
       for (const win of this.getMainWindows()) this.onMainWindowLoad(win);
     }
@@ -5422,6 +5570,9 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
     }
     shutdown() {
       if (getPref("debug")) Zotero.debug("[TabFlow] Shutting down");
+      this.store.flushPendingSave();
+      enablePrefCache(false);
+      resetI18nCache();
       this.pdfFolderSection.unregister();
       for (const id of this.prefObserverIDs) Zotero.Prefs.unregisterObserver(id);
       this.prefObserverIDs = [];
