@@ -52,9 +52,8 @@ export class HorizontalDragController {
 			} else if (!tab.groupId) {
 				const val = { value: tab.shortTitle.slice(0, 24) };
 				if (Services.prompt.prompt(this.win, t('zotero-tabflow-stack-group-title', '叠放新建分组'), t('zotero-tabflow-stack-group-prompt', '将两篇文献合并到新分组：'), val, null, {}) && val.value.trim()) {
-					const g = this.store.ensureGroup(val.value);
-					this.store.assignKey(tab.key, g.id);
-					this.store.assignKey(draggedKey, g.id);
+					const g = this.store.ensureGroup(val.value, false);
+					this.store.assignKeys([tab.key, draggedKey], g.id);
 				}
 			} else {
 				this.store.assignKey(draggedKey, tab.groupId);

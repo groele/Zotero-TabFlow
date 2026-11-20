@@ -16,7 +16,6 @@ import type { SpotlightController } from './spotlight.ts';
 import type { TabContextMenuController } from './tab-context-menu.ts';
 import { ToolbarActions, type ToolbarAction } from './toolbar-actions.ts';
 import { computeWorkspaceHubCounts } from './workspace-hub.ts';
-
 export class HorizontalBarController {
 	private root: HTMLDivElement | null = null;
 	private pinnedStrip: HTMLDivElement | null = null;
@@ -27,7 +26,6 @@ export class HorizontalBarController {
 	private lastSelectedID = '';
 	private layoutRetry = false;
 	private groupSections = new Map<string, GroupSection>();
-
 	constructor(
 		private readonly win: Window,
 		private readonly doc: Document,
@@ -92,7 +90,6 @@ export class HorizontalBarController {
 		const nativeToolbar = this.doc.getElementById('zotero-tabs-toolbar') || inner;
 		if (this.toolbarActions.parentElement !== nativeToolbar) nativeToolbar.append(this.toolbarActions);
 	}
-
 	private bindWheel(area: HTMLDivElement): void {
 		area.addEventListener('wheel', (e: WheelEvent) => {
 			this.hoverCard?.hide();
@@ -105,7 +102,7 @@ export class HorizontalBarController {
 		}, { passive: false });
 	}
 
-	render(snapshot?: readonly TrackedTab[]): void {
+	render(snapshot?: readonly TrackedTab[]): number | undefined {
 		const host = this.doc.getElementById('tab-bar-container');
 		if (!host) return;
 		this.mount();
@@ -120,8 +117,8 @@ export class HorizontalBarController {
 		}
 		if (this.root) this.root.hidden = !mounted;
 		const trackedTabs = snapshot ?? (mounted || getPref('enableStaleSuggestions') ? this.meta.buildTrackedTabs() : []);
-		this.renderToolbarButtons(compactMode, sidebarHealthy, trackedTabs);
-		if (!mounted || !this.root || this.root.querySelector('.ztf-inline-edit')) return;
+		const staleCount = this.renderToolbarButtons(compactMode, sidebarHealthy, trackedTabs);
+		if (!mounted || !this.root || this.root.querySelector('.ztf-inline-edit')) return staleCount;
 
 		const rawGroups = this.store.visibleGroups();
 		const visibleGroupIds = new Set(rawGroups.map((group) => group.id));
@@ -150,10 +147,11 @@ export class HorizontalBarController {
 		const autoCandidates: Array<{ node: HTMLElement; label: HTMLElement }> = [];
 		const preCollapse = (isSelected: boolean) =>
 			measureAuto ? false : shouldCollapseHorizontalChip(compactPref, totalInlineChips, isSelected);
+		const showUngrouped = getPref('newTabMode') === 'collection' && !this.store.state.ungroupedHeadingHidden;
 		const groups = rawGroups.filter((g) => {
 			const hasMembers = unpinned.has(g.id);
 			const hasVirtuals = virtualsByGroup.has(g.id);
-			const hasCustomHeading = !this.store.state.ungroupedHeadingHidden && Boolean(this.store.state.ungroupedName);
+			const hasCustomHeading = showUngrouped && Boolean(this.store.state.ungroupedName);
 			return shouldRenderGroupHeading(g.id, hasMembers, hasVirtuals, hasCustomHeading);
 		});
 		for (const g of groups) {
@@ -169,7 +167,7 @@ export class HorizontalBarController {
 				this.groupSections.set(g.id, section);
 			}
 			section.element.style.setProperty('--ztf-color', g.color);
-			const showHeading = Boolean(g.id) || !this.store.state.ungroupedHeadingHidden;
+			const showHeading = Boolean(g.id) || showUngrouped;
 			const collapsed = showHeading && collapsedIds.has(g.id);
 			const members = unpinned.get(g.id) ?? [];
 			const virtuals = virtualsByGroup.get(g.id) ?? [];
@@ -221,16 +219,20 @@ export class HorizontalBarController {
 			this.addGroupButton = addBtn;
 		}
 		reconcileGroupSections(this.root, this.groupSections, groups.map((g) => g.id), this.addGroupButton);
+		if (this.root.clientWidth > 0) this.layoutRetry = false;
 		if (measureAuto && autoCandidates.length && this.root.scrollWidth > this.root.clientWidth + 2) {
 			for (const item of autoCandidates) { item.node.classList.add('ztf-chip-collapsed'); item.label.textContent = '···'; }
 		} else if (compactPref === 'auto' && this.root.clientWidth === 0 && !this.layoutRetry && typeof this.win?.requestAnimationFrame === 'function') {
-			this.layoutRetry = true; this.win.requestAnimationFrame(() => { this.layoutRetry = false; this.render(); });
+			this.layoutRetry = true;
+			const root = this.root;
+			this.win.requestAnimationFrame(() => { if (this.root === root) this.onRefresh(); });
 		}
 		this.root.scrollLeft = scroll;
 		if (selectedID && selectedID !== this.lastSelectedID) {
 			this.lastSelectedID = selectedID;
 			this.root.querySelector('.ztf-doc.selected')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 		}
+		return staleCount;
 	}
 
 	private beginInlineEdit(anchor: HTMLElement, initial: string, onCommit: (name: string) => void, placeholder = ''): void {
@@ -292,8 +294,8 @@ export class HorizontalBarController {
 		return node;
 	}
 
-	private renderToolbarButtons(compactMode: boolean, sidebarHealthy: boolean, tracked: readonly TrackedTab[]): void {
-		if (!this.toolbarActions) return;
+	private renderToolbarButtons(compactMode: boolean, sidebarHealthy: boolean, tracked: readonly TrackedTab[]): number {
+		if (!this.toolbarActions) return 0;
 		const actions: ToolbarAction[] = [];
 		if (compactMode || (getPref('enableHorizontalGroups') && sidebarHealthy)) {
 			actions.push({
@@ -341,6 +343,7 @@ export class HorizontalBarController {
 			});
 		}
 		this.toolbar.render(this.toolbarActions, actions);
+		return count;
 	}
 
 	dispose(): void {

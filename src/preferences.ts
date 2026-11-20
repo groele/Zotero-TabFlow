@@ -28,7 +28,7 @@ function updateDependencies(doc: Document): void {
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-compactTopBar'), !getPref('enableHorizontalGroups') || !getPref('enableVerticalSidebar'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-enableBatchSelection'), !getPref('enableVerticalSidebar'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-pinnedIconOnly'), !getPref('enablePinnedTabs'));
-	setSubtreeDisabled(doc.getElementById('tabflow-sub-multiCollectionStrategy'), !getPref('enableCollectionAutoGroup'));
+	setSubtreeDisabled(doc.getElementById('tabflow-sub-multiCollectionStrategy'), getPref('newTabMode') !== 'collection');
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-remarkDisplayMode'), !getPref('enableTabRemarks'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-enableRollingSnapshots'), !getPref('enableSessions'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-autoSleepMinutes'), !getPref('enableTabSleep'));
@@ -65,7 +65,7 @@ const TabFlowPreferences = {
 		if (!this.observerIDs.length) {
 			this.observerIDs = [
 				'enableHorizontalGroups', 'horizontalTabCompactMode', 'enableVerticalSidebar', 'enablePinnedTabs',
-				'enableCollectionAutoGroup', 'enableTabRemarks', 'enableSessions',
+				'newTabMode', 'enableTabRemarks', 'enableSessions',
 				'enableTabSleep', 'enableStaleSuggestions', 'enableTabContextMenu',
 				'multiCollectionStrategy', 'remarkDisplayMode', 'verticalTabTitleMode', 'verticalTabSubtitleMode',
 			].map((key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => updateDependencies(doc), true));

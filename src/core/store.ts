@@ -27,6 +27,7 @@ export class TabFlowStore {
 	}
 
 	load(): void {
+		if (this.saveTimer !== null) { (globalThis as any).clearTimeout?.(this.saveTimer); this.saveTimer = null; }
 		const raw = Zotero.Prefs.get(STATE_PREF, true);
 		if (raw === '' || raw == null) {
 			this.state = createEmptyState();
@@ -130,12 +131,12 @@ export class TabFlowStore {
 		this.save();
 	}
 
-	ensureGroup(name: string): TabGroup {
+	ensureGroup(name: string, persist = true): TabGroup {
 		const clean = name.trim().slice(0, 60) || t('zotero-tabflow-default-group-name', '新分组');
 		const existing = this.state.groups.find((g) => g.name === clean);
 		if (existing) return existing;
 		const group = this.addGroup(clean, AUTO_COLORS[this.state.groups.length % AUTO_COLORS.length]);
-		this.save();
+		if (persist) this.save();
 		return group;
 	}
 
@@ -226,7 +227,7 @@ export class TabFlowStore {
 		this.assignKeys([key], groupId);
 	}
 
-	assignKeys(keys: readonly string[], groupId: string): void {
+	assignKeys(keys: readonly string[], groupId: string, persist = true): void {
 		if (!keys.length) return;
 		if (groupId && !this.state.groups.some((g) => g.id === groupId)) return;
 		for (const key of keys) {
@@ -234,7 +235,7 @@ export class TabFlowStore {
 			else delete this.state.assignments[key];
 		}
 		this.state.collapsed = this.state.collapsed.filter((id) => id !== groupId);
-		this.save();
+		if (persist) this.save();
 	}
 
 	getRemark(key: string | null): TabRemark {
@@ -270,9 +271,12 @@ export class TabFlowStore {
 	}
 	togglePinned(key: string): boolean { const next = !this.isPinned(key); this.setPinnedKeys([key], next); return next; }
 	isSleeping(key: string): boolean { return this.state.sleeping.includes(key); }
-	setSleeping(key: string, sleeping: boolean): void {
+	setSleeping(key: string | readonly string[], sleeping: boolean): void {
 		const set = new Set(this.state.sleeping);
-		if (sleeping) set.add(key); else set.delete(key);
+		for (const item of typeof key === 'string' ? [key] : key) {
+			if (sleeping) set.add(item); else set.delete(item);
+		}
+		if (set.size === this.state.sleeping.length) return;
 		this.state.sleeping = [...set];
 		this.save();
 	}

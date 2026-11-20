@@ -42,7 +42,7 @@
     enablePinnedTabs: true,
     pinnedIconOnly: false,
     enableVirtualMembers: true,
-    enableCollectionAutoGroup: false,
+    newTabMode: "independent",
     multiCollectionStrategy: "active",
     enableTabRemarks: true,
     remarkDisplayMode: "both",
@@ -76,6 +76,7 @@
     const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
     const fallback = DEFAULT_PREFS[key];
     let val = typeof raw !== typeof fallback ? fallback : raw;
+    if (key === "newTabMode" && raw !== "collection" && raw !== "independent") val = fallback;
     const range = NUMERIC_RANGES[key];
     if (range && typeof raw === "number") {
       val = Number.isFinite(raw) ? Math.max(range[0], Math.min(range[1], Math.trunc(raw))) : fallback;
@@ -123,7 +124,7 @@
     setSubtreeDisabled(doc.getElementById("tabflow-sub-compactTopBar"), !getPref("enableHorizontalGroups") || !getPref("enableVerticalSidebar"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-enableBatchSelection"), !getPref("enableVerticalSidebar"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-pinnedIconOnly"), !getPref("enablePinnedTabs"));
-    setSubtreeDisabled(doc.getElementById("tabflow-sub-multiCollectionStrategy"), !getPref("enableCollectionAutoGroup"));
+    setSubtreeDisabled(doc.getElementById("tabflow-sub-multiCollectionStrategy"), getPref("newTabMode") !== "collection");
     setSubtreeDisabled(doc.getElementById("tabflow-sub-remarkDisplayMode"), !getPref("enableTabRemarks"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-enableRollingSnapshots"), !getPref("enableSessions"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-autoSleepMinutes"), !getPref("enableTabSleep"));
@@ -157,7 +158,7 @@
           "horizontalTabCompactMode",
           "enableVerticalSidebar",
           "enablePinnedTabs",
-          "enableCollectionAutoGroup",
+          "newTabMode",
           "enableTabRemarks",
           "enableSessions",
           "enableTabSleep",

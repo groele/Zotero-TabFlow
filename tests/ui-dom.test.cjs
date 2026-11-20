@@ -437,8 +437,8 @@ test('Spotlight shortcut, library search, result activation, and workspace comma
 		});
 		el.setAttribute = (key, value) => { el[key] = value; };
 		el.remove = () => { if (el.parentElement) el.parentElement.children = el.parentElement.children.filter((child) => child !== el); };
-		el.openPopup = () => { for (const fn of el.listeners.get('popupshown') || []) fn({ target: el }); };
-		el.hidePopup = () => {};
+		el.openPopup = () => { el.state = 'open'; for (const fn of el.listeners.get('popupshown') || []) fn({ target: el }); };
+		el.hidePopup = () => { el.state = 'closed'; };
 		el.classList = { toggle(name, enabled) {
 			const values = new Set(el.className.split(/\s+/).filter(Boolean));
 			if (enabled) values.add(name); else values.delete(name);

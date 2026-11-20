@@ -7,7 +7,7 @@
     <html:header class="tabflow-settings-header">
         <html:div class="tabflow-settings-title-row">
             <html:h1 data-l10n-id="zotero-tabflow-settings-heading"></html:h1>
-            <html:span id="tabflow-version-badge" data-l10n-id="zotero-tabflow-version-badge" data-l10n-args='{"version":"17.7.0"}' class="tabflow-version-badge"></html:span>
+            <html:span id="tabflow-version-badge" data-l10n-id="zotero-tabflow-version-badge" data-l10n-args='{"version":"17.8.0"}' class="tabflow-version-badge"></html:span>
         </html:div>
         <html:p data-l10n-id="zotero-tabflow-settings-intro"></html:p>
     </html:header>
@@ -67,8 +67,14 @@
             </html:div>
 
             <html:div class="tabflow-subgroup">
-                <checkbox id="tabflow-pref-enableCollectionAutoGroup" preference="extensions.zotero.tabflow.enableCollectionAutoGroup" native="true" data-l10n-id="zotero-tabflow-pref-enable-collection-autogroup"/>
-                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-collection-autogroup-desc"></description>
+                <label data-l10n-id="zotero-tabflow-pref-new-tab-mode" control="tabflow-pref-newTabMode"></label>
+                <menulist id="tabflow-pref-newTabMode" native="true" preference="extensions.zotero.tabflow.newTabMode">
+                    <menupopup>
+                        <menuitem value="independent" data-l10n-id="zotero-tabflow-new-tab-independent"/>
+                        <menuitem value="collection" data-l10n-id="zotero-tabflow-new-tab-collection"/>
+                    </menupopup>
+                </menulist>
+                <description class="tabflow-settings-description" data-l10n-id="zotero-tabflow-pref-new-tab-mode-desc"></description>
                 <html:div id="tabflow-sub-multiCollectionStrategy" class="tabflow-subordinate-row">
                     <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-multi-collection-strategy" control="tabflow-pref-multiCollectionStrategy"></label>
                     <menulist id="tabflow-pref-multiCollectionStrategy" native="true" preference="extensions.zotero.tabflow.multiCollectionStrategy">

@@ -1,6 +1,7 @@
 import { resetI18nCache } from './core/i18n.ts';
-import { DEFAULT_PREFS, PREF_PREFIX, enablePrefCache, getPref, invalidatePrefCache } from './core/prefs.ts';
+import { DEFAULT_PREFS, PREF_PREFIX, enablePrefCache, getPref, invalidatePrefCache, migrateNewTabMode } from './core/prefs.ts';
 import { TabFlowStore } from './core/store.ts';
+import type { TrackedTab } from './core/types.ts';
 import { ActivityTrackerService } from './services/activity-tracker.ts';
 import { ItemMetadataService } from './services/item-metadata.ts';
 import { TabActionService } from './services/tab-actions.ts';
@@ -31,25 +32,23 @@ class WindowWorkspace {
 	private refreshTimer: number | null = null;
 	private resizeTimer: number | null = null;
 	private ageTimer: number | null = null;
+	private autoGroupTimer: number | null = null;
+	private pendingAutoGroup = new Set<string>();
 	private lastSelected = '';
 	private disposed = false;
-	private ageTickCount = 0;
+	private tracked: readonly TrackedTab[] = [];
+	private staleCount = 0;
 	private onResize = (): void => {
 		if (this.disposed || this.resizeTimer !== null) return;
 		this.resizeTimer = this.win.setTimeout(() => { this.resizeTimer = null; this.schedule(); }, 100);
 	};
 
-	private saveRollingIfNeeded(): void {
-		if (!getPref('enableSessions') || !getPref('enableRollingSnapshots')) return;
-		const keys = this.meta.buildTrackedTabs().map((t) => t.key);
-		if (keys.length || this.store.state.groups.length) {
-			this.store.saveRollingSnapshot(keys);
-		}
-	}
+	getOpenKeys(): string[] { return this.meta.getOpenKeys(); }
 
 	constructor(
 		private readonly win: Window,
 		private readonly store: TabFlowStore,
+		private readonly onAgeTick: () => void,
 	) {
 		const doc = win.document;
 		this.meta = new ItemMetadataService(win, store);
@@ -87,27 +86,22 @@ class WindowWorkspace {
 
 		this.notifierID = Zotero.Notifier.registerObserver(
 			{
-				notify: (event: string, _type: string, ids: Array<string | number>) => {
-					const tabIds = ids.map(String);
-					if (event === 'add') {
-						if (this.store.state.collapsed.length) {
-							const added = new Set(tabIds);
-							for (const tab of this.meta.getNativeTabs()) {
-								if (tab.type === 'library' || !added.has(tab.id)) continue;
-								const groupId = this.store.groupOfKey(this.meta.tabKey(tab));
-								if (this.store.state.collapsed.includes(groupId)) this.store.setCollapsed(groupId, false, false);
-							}
+				notify: (event: string, type: string, ids: Array<string | number>) => {
+					if (type !== 'tab') {
+						if (!this.tracked.length) return;
+						if (type === 'item') {
+							const changed = new Set(ids.map(Number));
+							if (!this.tracked.some((tab) => changed.has(tab.itemID ?? 0) || changed.has(tab.parentItemID ?? 0))) return;
+							this.meta.invalidateItemFields(changed);
 						}
-						if (getPref('enableCollectionAutoGroup')) {
-							this.win.setTimeout(() => {
-								if (!this.disposed) this.actions.autoGroupByCollection(tabIds);
-							}, 80);
-						}
+						this.schedule();
+						return;
 					}
+					if (event === 'add' && !this.onTabsAdded(ids)) return;
 					this.schedule();
 				},
 			},
-			['tab'],
+			['tab', 'item', 'collection'],
 			'zotero-tabflow',
 		);
 
@@ -129,13 +123,44 @@ class WindowWorkspace {
 		}
 
 		this.ageTimer = this.win.setInterval(() => {
-			for (const t of this.tracker.getIdleTabsForSleep()) {
-				this.actions.sleepTab(t.tab.id);
-			}
-			this.ageTickCount++;
-			if (this.ageTickCount % 5 === 0) this.saveRollingIfNeeded();
-			this.schedule();
+			const now = Date.now();
+			const slept = this.actions.sleepTabs(this.tracker.getIdleTabsForSleep(now, this.tracked).map((tab) => tab.tab.id));
+			const showTime = getPref('enableVerticalSidebar') && !getPref('verticalSidebarCollapsed')
+				&& getPref('verticalTabSubtitleMode') === 'lastViewed';
+			const staleCount = this.tracker.getStaleTabs(now, this.tracked).length;
+			if (slept || (showTime && this.tracked.length) || staleCount !== this.staleCount) this.schedule();
+			this.onAgeTick();
 		}, 60_000);
+	}
+
+	private onTabsAdded(ids: Array<string | number>): boolean {
+		const added = new Set(ids.map(String));
+		const tabs = this.meta.getNativeTabs().filter((tab) => tab.type !== 'library' && added.has(tab.id));
+		if (!tabs.length) return false;
+
+		const collapsed = new Set(this.store.state.collapsed);
+		if (collapsed.size) {
+			const canOpenUngrouped = getPref('newTabMode') === 'collection' && !this.store.state.ungroupedHeadingHidden;
+			for (const tab of tabs) {
+				const groupId = this.store.groupOfKey(this.meta.tabKey(tab));
+				if (groupId || canOpenUngrouped) collapsed.delete(groupId);
+			}
+			if (collapsed.size !== this.store.state.collapsed.length) {
+				this.store.state.collapsed = [...collapsed];
+				this.store.scheduleSave();
+			}
+		}
+
+		if (getPref('newTabMode') === 'collection') {
+			for (const tab of tabs) this.pendingAutoGroup.add(tab.id);
+			this.autoGroupTimer ??= this.win.setTimeout(() => {
+				this.autoGroupTimer = null;
+				const pending = this.pendingAutoGroup;
+				this.pendingAutoGroup = new Set();
+				if (!this.disposed) this.actions.autoGroupNewTabs(pending);
+			}, 80);
+		}
+		return true;
 	}
 
 	schedule(): void {
@@ -149,7 +174,7 @@ class WindowWorkspace {
 	refresh(): void {
 		if (this.disposed) return;
 		const prevSelected = this.lastSelected;
-		const tracked = this.meta.buildTrackedTabs();
+		const tracked = this.tracked = this.meta.buildTrackedTabs();
 		this.lastSelected = this.tracker.trackActivity(this.lastSelected, tracked);
 		const retained = this.store.state.virtualMembers;
 		if (Object.keys(retained).length) {
@@ -165,21 +190,23 @@ class WindowWorkspace {
 		}
 		if (this.lastSelected && this.lastSelected !== prevSelected) {
 			const active = tracked.find((t) => t.tab.id === this.lastSelected);
-			if (active && this.store.state.collapsed.includes(active.groupId)) {
+			if (active && (active.groupId || getPref('newTabMode') === 'collection')
+				&& this.store.state.collapsed.includes(active.groupId)) {
 				this.store.setCollapsed(active.groupId, false, false);
 			}
 		}
 		this.sidebar.render(tracked);
-		this.horizontal.render(tracked);
+		this.staleCount = this.horizontal.render(tracked) ?? 0;
 	}
 
 	dispose(): void {
 		this.disposed = true;
 		this.win.removeEventListener?.('resize', this.onResize);
 		if (this.resizeTimer !== null) this.win.clearTimeout(this.resizeTimer);
-		try { this.saveRollingIfNeeded(); this.store.flushPendingSave(); } catch { /* Best-effort snapshot on unload */ }
 		if (this.refreshTimer !== null) this.win.clearTimeout(this.refreshTimer);
 		if (this.ageTimer !== null) this.win.clearInterval(this.ageTimer);
+		if (this.autoGroupTimer !== null) this.win.clearTimeout(this.autoGroupTimer);
+		this.pendingAutoGroup.clear();
 		this.observer?.disconnect();
 		if (this.notifierID) Zotero.Notifier.unregisterObserver(this.notifierID);
 		this.popovers.dispose();
@@ -202,6 +229,7 @@ class TabFlowPlugin {
 	private windows = new Map<Window, WindowWorkspace>();
 	private pdfFolderSection = new PdfFolderSectionController();
 	private prefObserverIDs: symbol[] = [];
+	private nextRollingAt = 0;
 	private unsubscribeStore: (() => void) | null = null;
 
 	init(info: { id: string; version: string; rootURI: string }): void {
@@ -211,8 +239,10 @@ class TabFlowPlugin {
 	}
 
 	start(): void {
+		migrateNewTabMode();
 		enablePrefCache(true);
 		this.store.load();
+		this.nextRollingAt = Date.now() + 300_000;
 		if (getPref('debug')) Zotero.debug('[TabFlow] Workspace state loaded');
 		this.pdfFolderSection.register(this.id, this.rootURI);
 		this.unsubscribeStore = this.store.subscribe(() => this.refreshAll());
@@ -234,7 +264,7 @@ class TabFlowPlugin {
 
 	onMainWindowLoad(win: Window): void {
 		if (this.windows.has(win) || !(win as any).Zotero_Tabs) return;
-		const ws = new WindowWorkspace(win, this.store);
+		const ws = new WindowWorkspace(win, this.store, () => this.saveRollingIfDue());
 		this.windows.set(win, ws);
 		ws.init();
 	}
@@ -242,13 +272,14 @@ class TabFlowPlugin {
 	onMainWindowUnload(win: Window): void {
 		const ws = this.windows.get(win);
 		if (!ws) return;
+		if (this.windows.size === 1) this.saveRollingIfDue(true);
 		ws.dispose();
 		this.windows.delete(win);
 	}
 
 	shutdown(): void {
 		if (getPref('debug')) Zotero.debug('[TabFlow] Shutting down');
-		this.store.flushPendingSave();
+		this.saveRollingIfDue(true);
 		enablePrefCache(false);
 		resetI18nCache();
 		this.pdfFolderSection.unregister();
@@ -258,6 +289,27 @@ class TabFlowPlugin {
 		this.unsubscribeStore = null;
 		for (const ws of this.windows.values()) ws.dispose();
 		this.windows.clear();
+	}
+
+	private saveRollingIfDue(force = false): void {
+		const now = Date.now();
+		if (!force && now < this.nextRollingAt) return;
+		this.nextRollingAt = now + 300_000;
+		try {
+			if (this.windows.size && getPref('enableSessions') && getPref('enableRollingSnapshots')) {
+				const keys = new Set<string>();
+				for (const workspace of this.windows.values()) {
+					for (const key of workspace.getOpenKeys()) keys.add(key);
+				}
+				if (keys.size || this.store.state.groups.length) this.store.saveRollingSnapshot([...keys]);
+			}
+		} catch (error) {
+			Zotero.logError(error as Error);
+		} finally {
+			if (force) {
+				try { this.store.flushPendingSave(); } catch (error) { Zotero.logError(error as Error); }
+			}
+		}
 	}
 
 	private getMainWindows(): Window[] {

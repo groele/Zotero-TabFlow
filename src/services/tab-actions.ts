@@ -123,37 +123,45 @@ export class TabActionService {
 	}
 
 	sleepTab(tabId: string): boolean {
-		if (!getPref('enableTabSleep')) return false;
+		return this.sleepTabs([tabId]) > 0;
+	}
+
+	sleepTabs(tabIds: readonly string[]): number {
+		if (!tabIds.length || !getPref('enableTabSleep')) return 0;
+		const keys: string[] = [];
+		for (const tabId of new Set(tabIds)) {
+			const key = this.unloadTab(tabId);
+			if (key) keys.push(key);
+		}
+		if (keys.length) this.store.setSleeping(keys, true);
+		return keys.length;
+	}
+
+	private unloadTab(tabId: string): string | false {
 		const tab = this.meta.getNativeTabs().find((t) => t.id === tabId);
 		const key = this.meta.tabKey(tab);
 		if (!tab || !key || tabId === this.meta.getSelectedTabID() || tab.type.endsWith('-unloaded')) return false;
 		if (getPref('enablePinnedTabs') && this.store.isPinned(key)) return false;
 		const tabs = (this.win as any).Zotero_Tabs;
-		const reader = (Zotero.Reader as any)?.getByTabID?.(tabId);
-		if (typeof tabs?.unload !== 'function' || tabs.canUnload?.(tabId) === false
-			|| isTabBusyOrProtected(tab, reader, { protectMedia: true }, false, '')) return false;
 		try {
+			const reader = (Zotero.Reader as any)?.getByTabID?.(tabId);
+			if (typeof tabs?.unload !== 'function' || tabs.canUnload?.(tabId) === false
+				|| isTabBusyOrProtected(tab, reader, { protectMedia: true }, false, '')) return false;
 			tabs.unload(tabId);
 		} catch (error) {
 			Zotero.logError(error as Error);
 			return false;
 		}
 		const unloaded = this.meta.getNativeTabs().find((candidate) => candidate.id === tabId)?.type.endsWith('-unloaded') === true;
-		if (!unloaded) return false;
-		this.store.setSleeping(key, true);
-		return true;
+		return unloaded ? key : false;
 	}
 
 	sleepInactiveTabs(): number {
 		if (!getPref('enableTabSleep')) return 0;
 		const selected = this.meta.getSelectedTabID();
-		let count = 0;
-		for (const t of this.meta.buildTrackedTabs()) {
-			if (t.tab.id !== selected && !t.pinned && t.status === 'active') {
-				if (this.sleepTab(t.tab.id)) count++;
-			}
-		}
-		return count;
+		return this.sleepTabs(this.meta.buildTrackedTabs()
+			.filter((t) => t.tab.id !== selected && !t.pinned && t.status === 'active')
+			.map((t) => t.tab.id));
 	}
 
 	async openVirtualOrItem(itemID: number, groupId?: string, openInBackground = false, keyFallback?: string): Promise<boolean> {
@@ -191,18 +199,31 @@ export class TabActionService {
 		}
 	}
 
-	autoGroupByCollection(onlyTabIDs?: string[]): number {
-		let moved = 0;
-		const filterSet = onlyTabIDs ? new Set(onlyTabIDs) : null;
+	autoGroupNewTabs(tabIds: ReadonlySet<string>): number {
+		return getPref('newTabMode') === 'collection' && tabIds.size
+			? this.autoGroupByCollection(tabIds)
+			: 0;
+	}
+
+	autoGroupByCollection(onlyTabIDs?: ReadonlySet<string>): number {
+		if (this.store.readOnly) return 0;
 		const hiddenNames = new Set(this.store.hiddenGroups().map((group) => group.name));
-		for (const t of this.meta.buildTrackedTabs()) {
-			if (filterSet && !filterSet.has(t.tab.id)) continue;
-			if (!t.groupId && !t.pinned && t.collection && !hiddenNames.has(t.collection) && t.collection !== uncategorizedCollectionLabel()) {
-				const group = this.store.ensureGroup(t.collection);
-				this.store.assignKey(t.key, group.id);
-				moved++;
-			}
+		const uncategorized = uncategorizedCollectionLabel();
+		const byCollection = new Map<string, Set<string>>();
+		for (const tab of this.meta.buildTrackedTabs(onlyTabIDs)) {
+			const name = tab.collection.trim().slice(0, 60);
+			if (!name || tab.groupId || tab.pinned || tab.key.startsWith('tab:')
+				|| name === uncategorized || hiddenNames.has(name)) continue;
+			if (!byCollection.has(name)) byCollection.set(name, new Set());
+			byCollection.get(name)!.add(tab.key);
 		}
+		let moved = 0;
+		for (const [name, keys] of byCollection) {
+			const group = this.store.ensureGroup(name, false);
+			this.store.assignKeys([...keys], group.id, false);
+			moved += keys.size;
+		}
+		if (moved) this.store.save();
 		return moved;
 	}
 

@@ -467,3 +467,122 @@ test('performance caches: pref cache invalidates cleanly, scheduleSave coalesces
 	assert.equal(clones, 2);
 	assert.deepEqual(cloned, { cloned: true });
 });
+
+test('batch sleep persists once and does not record refused or duplicate tabs', () => {
+	const { tabs, items, store, actions } = fixture();
+	for (const id of [1, 2, 3]) {
+		items.set(id, { id, key: `PAPER${id}`, libraryID: 1 });
+		tabs._tabs.push({ id: `tab-${id}`, type: 'reader', data: { itemID: id } });
+	}
+	tabs.unload = (id) => {
+		if (id !== 'tab-2') tabs._tabs.find((tab) => tab.id === id).type = 'reader-unloaded';
+	};
+	let writes = 0;
+	const originalSet = Zotero.Prefs.set;
+	Zotero.Prefs.set = (...args) => { writes++; originalSet(...args); };
+	assert.equal(actions.sleepTabs(['tab-1', 'tab-1', 'tab-2', 'tab-3']), 2);
+	assert.deepEqual(store.state.sleeping, ['1:PAPER1', '1:PAPER3']);
+	assert.equal(writes, 1);
+	assert.equal(actions.sleepTabs(['tab-1', 'tab-2']), 0);
+	assert.equal(writes, 1);
+});
+
+test('reloading state cancels the deferred write from the previous state', () => {
+	const { store, prefs } = fixture();
+	const key = 'extensions.zotero.tabflow.state';
+	store.scheduleSave(100);
+	prefs.delete(key);
+	store.load();
+	store.flushPendingSave();
+	assert.equal(prefs.has(key), false);
+});
+
+test('large Spotlight indexes yield and stop indexing when the window closes', async () => {
+	fixture();
+	const { buildSpotlightLibraryIndex } = require('../src/services/spotlight-library.ts');
+	const fetched = [];
+	const items = Array.from({ length: 500 }, (_, id) => ({
+		id, key: String(id), isRegularItem: () => true, getField: () => 'Title',
+	}));
+	Zotero.Libraries = { getAll: () => [{ libraryID: 1 }, { libraryID: 2 }] };
+	Zotero.Items.getAll = async (id) => { fetched.push(id); return items; };
+	let stopped = false;
+	let processed = 0;
+	const win = { setTimeout: (resolve) => setTimeout(() => { stopped = true; resolve(); }, 0) };
+	const result = await buildSpotlightLibraryIndex(win, {
+		plainTitle: (title) => { processed++; return title; },
+	}, () => stopped);
+	assert.equal(result, null);
+	assert.equal(processed, 200);
+	assert.deepEqual(fetched, [1]);
+});
+
+test('rolling snapshots merge open keys across windows and share one interval', () => {
+	fixture();
+	const { readFileSync } = require('node:fs');
+	const { runInNewContext } = require('node:vm');
+	runInNewContext(readFileSync(require.resolve('../zoterotabflow.js'), 'utf8'), { Zotero });
+	const plugin = Zotero.zoterotabflow;
+	const snapshots = [];
+	plugin.store.saveRollingSnapshot = (keys) => snapshots.push(keys);
+	plugin.windows.set({}, { getOpenKeys: () => ['1:SHARED', '1:LEFT'] });
+	plugin.windows.set({}, { getOpenKeys: () => ['1:SHARED', '1:RIGHT'] });
+	plugin.saveRollingIfDue();
+	plugin.saveRollingIfDue();
+	assert.deepEqual(snapshots.map((keys) => Array.from(keys)), [['1:SHARED', '1:LEFT', '1:RIGHT']]);
+});
+
+test('new tabs stay independent until assigned, while collection mode groups only the new batch', () => {
+	const { tabs, items, store, actions, meta } = fixture();
+	let collectionReads = 0;
+	Zotero.Collections = { get: (id) => ({ name: `Collection ${id}` }) };
+	for (const id of [1, 2, 3, 4]) {
+		items.set(id, {
+			id, key: `DOC${id}`, libraryID: 1,
+			getCollections: () => { collectionReads++; return [id < 4 ? 1 : 2]; },
+		});
+		tabs._tabs.push({ id: `reader-${id}`, type: 'reader', data: { itemID: id } });
+	}
+	const added = new Set(['reader-1', 'reader-2', 'reader-4']);
+	assert.equal(getPref('newTabMode'), 'independent');
+	assert.equal(actions.autoGroupNewTabs(added), 0);
+	assert.equal(collectionReads, 0);
+	assert.deepEqual(store.state.assignments, {});
+
+	const manual = store.ensureGroup('Manual');
+	store.assignKey('1:DOC1', manual.id);
+	assert.equal(meta.buildTrackedTabs(new Set(['reader-1']))[0].groupId, manual.id);
+	collectionReads = 0;
+
+	setPref('newTabMode', 'collection');
+	let writes = 0;
+	const originalSet = Zotero.Prefs.set;
+	Zotero.Prefs.set = (...args) => { writes++; originalSet(...args); };
+	assert.equal(actions.autoGroupNewTabs(added), 2);
+	assert.equal(collectionReads, 3);
+	assert.equal(writes, 1);
+	assert.equal(store.groupOfKey('1:DOC1'), manual.id);
+	assert.equal(store.groupOfKey('1:DOC3'), '');
+	assert.notEqual(store.groupOfKey('1:DOC2'), store.groupOfKey('1:DOC4'));
+	assert.ok(store.groupOfKey('1:DOC2'));
+	assert.ok(store.groupOfKey('1:DOC4'));
+});
+
+test('legacy auto grouping migrates once and respects a subsequent user choice', () => {
+	const { prefs } = fixture();
+	const { migrateNewTabMode, PREF_PREFIX } = require('../src/core/prefs.ts');
+	const previous = globalThis.Services;
+	globalThis.Services = { prefs: { prefHasUserValue: (key) => prefs.has(key) } };
+	try {
+		prefs.set(PREF_PREFIX + 'enableCollectionAutoGroup', true);
+		migrateNewTabMode();
+		assert.equal(getPref('newTabMode'), 'collection');
+		setPref('newTabMode', 'independent');
+		migrateNewTabMode();
+		assert.equal(getPref('newTabMode'), 'independent');
+		prefs.set(PREF_PREFIX + 'newTabMode', 'invalid');
+		assert.equal(getPref('newTabMode'), 'independent');
+	} finally {
+		globalThis.Services = previous;
+	}
+});

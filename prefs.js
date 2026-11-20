@@ -7,7 +7,7 @@ pref("extensions.zotero.tabflow.enableBatchSelection", true);
 pref("extensions.zotero.tabflow.enablePinnedTabs", true);
 pref("extensions.zotero.tabflow.pinnedIconOnly", false);
 pref("extensions.zotero.tabflow.enableVirtualMembers", true);
-pref("extensions.zotero.tabflow.enableCollectionAutoGroup", false);
+pref("extensions.zotero.tabflow.newTabMode", "independent");
 pref("extensions.zotero.tabflow.multiCollectionStrategy", "active");
 pref("extensions.zotero.tabflow.enableTabRemarks", true);
 pref("extensions.zotero.tabflow.remarkDisplayMode", "both");

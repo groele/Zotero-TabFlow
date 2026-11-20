@@ -57,7 +57,7 @@ export class TabContextMenuController {
 
 	openTabMenu(event: MouseEvent, tracked: TrackedTab): void {
 		const tabMenuEnabled = getPref('enableTabContextMenu');
-		if (!tabMenuEnabled && (tracked.groupId || !this.store.state.ungroupedHeadingHidden)) return;
+		if (!tabMenuEnabled && (tracked.groupId || !this.canRestoreUngroupedHeading())) return;
 		event.preventDefault();
 		event.stopPropagation();
 		this.openAt(event, (popup) => {
@@ -264,8 +264,12 @@ export class TabContextMenuController {
 		});
 	}
 
+	private canRestoreUngroupedHeading(): boolean {
+		return getPref('newTabMode') === 'collection' && this.store.state.ungroupedHeadingHidden === true;
+	}
+
 	private addUngroupedHeadingRestore(popup: Element): void {
-		if (!this.store.state.ungroupedHeadingHidden) return;
+		if (!this.canRestoreUngroupedHeading()) return;
 		this.item(popup, t('zotero-tabflow-show-ungrouped-heading', '恢复未分组标题'), () => {
 			if (this.store.setUngroupedHeadingHidden(false)) this.onRefresh();
 		}, { disabled: this.store.readOnly });

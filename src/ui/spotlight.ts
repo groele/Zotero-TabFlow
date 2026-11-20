@@ -2,12 +2,12 @@ import { t } from '../core/i18n.ts';
 import { getPref, setPref } from '../core/prefs.ts';
 import { formatSnapshotTimestamp } from '../core/session-store.ts';
 import type { TabFlowStore } from '../core/store.ts';
+import { buildSpotlightLibraryIndex, type LibraryIndexItem } from '../services/spotlight-library.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import type { PopoverController } from './popovers.ts';
 
 interface SpotEntry { label: string; hint: string; keepOpen?: boolean; run: () => void; }
-interface LibraryIndexItem { id: number; fullKey: string; title: string; metaHint: string; searchText: string; }
 
 export class SpotlightController {
 	private readonly win: Window;
@@ -23,7 +23,7 @@ export class SpotlightController {
 	private entries: SpotEntry[] = [];
 	private activeIndex = 0;
 	private libraryCache: LibraryIndexItem[] = [];
-	private cacheTimestamp = 0;
+	private cacheExpiresAt = 0;
 	private libraryLoading = false;
 	private libraryLoad: Promise<void> | null = null;
 
@@ -102,45 +102,22 @@ export class SpotlightController {
 	}
 
 	private warmLibraryCache(): Promise<void> {
-		if (Date.now() - this.cacheTimestamp < 120_000 && this.libraryCache.length) return Promise.resolve();
+		if (Date.now() < this.cacheExpiresAt) return Promise.resolve();
 		if (this.libraryLoad) return this.libraryLoad;
 		this.libraryLoading = true;
 		this.libraryLoad = (async () => {
 			try {
-				const api = Zotero.Libraries as any;
-				const libraries = api?.getAll?.();
-				const libraryIDs = Array.isArray(libraries)
-					? [...new Set(libraries.map((library: any) => library?.libraryID).filter((id: unknown): id is number => Number.isInteger(id) && Number(id) > 0))]
-					: [api?.userLibraryID ?? 1];
-				const byLibrary = await Promise.all(libraryIDs.map(async (libraryID) => {
-					try {
-						const items = await (Zotero.Items as any)?.getAll?.(libraryID, true, false, false);
-						return Array.isArray(items) ? items.filter((item: any) => item?.isRegularItem?.()).map((item: any) => ({ item, libraryID })) : [];
-					} catch { return []; }
-				}));
-				this.libraryCache = byLibrary.flatMap((entries) => entries.map(({ item, libraryID }) => {
-					const title = this.meta.plainTitle(String(item.getField?.('title') || ''));
-					const creators = item.getCreators?.() || [];
-					const author = creators[0]?.lastName || creators[0]?.firstName || '';
-					const year = String(item.getField?.('year') || '').slice(0, 4);
-					const pub = String(item.getField?.('publicationTitle') || item.getField?.('proceedingsTitle') || '');
-					let libraryName = '';
-					try { libraryName = api?.getName?.(libraryID) || ''; } catch { /* Library names are optional search metadata. */ }
-					return {
-						id: item.id,
-						fullKey: `${libraryID}:${item.key}`,
-						title: title || item.key,
-						metaHint: [libraryName, author, year, pub].filter(Boolean).join(' · '),
-						searchText: `${title} ${author} ${year} ${pub} ${libraryName}`.toLowerCase(),
-					};
-				}));
-				this.cacheTimestamp = Date.now();
+				const index = await buildSpotlightLibraryIndex(this.win, this.meta, () => !this.panel);
+				if (index && this.panel) {
+					this.libraryCache = index.entries;
+					this.cacheExpiresAt = Date.now() + (index.complete ? 120_000 : 10_000);
+				}
 			} catch {
 				// Keep search usable when a library cannot be indexed.
 			} finally {
 				this.libraryLoading = false;
 				this.libraryLoad = null;
-				if (this.input?.value.trim().startsWith('@')) this.renderResults();
+				if (['open', 'showing'].includes(this.panel?.state) && this.input?.value.trim().startsWith('@')) this.renderResults();
 			}
 		})();
 		return this.libraryLoad;
@@ -349,5 +326,7 @@ export class SpotlightController {
 		this.panel?.hidePopup?.();
 		this.panel?.remove?.();
 		this.panel = null; this.input = null; this.resultsEl = null; this.entries = [];
+		this.libraryCache = [];
+		this.cacheExpiresAt = 0;
 	}
 }

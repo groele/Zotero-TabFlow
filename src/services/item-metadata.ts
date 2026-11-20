@@ -44,6 +44,15 @@ export class ItemMetadataService {
 		return item ? `${item.libraryID}:${item.key}` : null;
 	}
 
+	invalidateItemFields(ids: ReadonlySet<number>): void {
+		for (const id of ids) this.itemFields.delete(id);
+	}
+
+	getOpenKeys(): string[] {
+		return this.getNativeTabs().filter((tab) => tab.type !== 'library')
+			.map((tab) => this.tabKey(tab) ?? `tab:${tab.id}`);
+	}
+
 	resolvePrimaryItem(itemID: number | null): any | null {
 		if (typeof itemID !== 'number') return null;
 		const item = Zotero.Items.get(itemID);
@@ -107,7 +116,8 @@ export class ItemMetadataService {
 		const hit = id && stamp ? this.itemFields.get(id) : undefined;
 		if (hit && hit.stamp === stamp) return hit;
 
-		const title = this.plainTitle(String(primary?.getField?.('title') || fallbackTitle));
+		const rawTitle = primary?.getField?.('title');
+		const title = this.plainTitle(String(rawTitle || fallbackTitle));
 		const shortTitle = this.plainTitle(String(primary?.getField?.('shortTitle') || title));
 		const source = String(
 			primary?.getField?.('publicationTitle') ||
@@ -119,14 +129,14 @@ export class ItemMetadataService {
 		const firstAuthor = creators[0]?.lastName || creators[0]?.firstName || '';
 		const year = String(primary?.getField?.('year') || '').slice(0, 4);
 		const fields: CachedItemFields = { stamp, title, shortTitle, source, creatorYear: [firstAuthor, year].filter(Boolean).join(', ') };
-		if (id && stamp) {
+		if (id && stamp && rawTitle) {
 			if (this.itemFields.size >= MAX_CACHE_ENTRIES) this.itemFields.clear();
 			this.itemFields.set(id, fields);
 		}
 		return fields;
 	}
 
-	buildTrackedTabs(): TrackedTab[] {
+	buildTrackedTabs(onlyTabIDs?: ReadonlySet<string>): TrackedTab[] {
 		const enablePinned = getPref('enablePinnedTabs');
 		const enableSleep = getPref('enableTabSleep');
 		const strategy = getPref('multiCollectionStrategy');
@@ -142,7 +152,7 @@ export class ItemMetadataService {
 		const collections = new Map<number, string>();
 		const untitled = t('zotero-tabflow-untitled', '无标题');
 		return this.getNativeTabs()
-			.filter((t) => t.type !== 'library')
+			.filter((t) => t.type !== 'library' && (!onlyTabIDs || onlyTabIDs.has(t.id)))
 			.map((tab) => {
 				const itemID = typeof tab.data?.itemID === 'number' ? tab.data.itemID : null;
 				const rawItem: any = itemID ? Zotero.Items.get(itemID) : null;

@@ -8,6 +8,8 @@ import type {
 
 export const PREF_PREFIX = 'extensions.zotero.tabflow.';
 
+export type NewTabMode = 'independent' | 'collection';
+
 export interface TabFlowPrefs {
 	enableHorizontalGroups: boolean;
 	horizontalTabCompactMode: HorizontalTabCompactMode;
@@ -18,7 +20,7 @@ export interface TabFlowPrefs {
 	enablePinnedTabs: boolean;
 	pinnedIconOnly: boolean;
 	enableVirtualMembers: boolean;
-	enableCollectionAutoGroup: boolean;
+	newTabMode: NewTabMode;
 	multiCollectionStrategy: MultiCollectionStrategy;
 	enableTabRemarks: boolean;
 	remarkDisplayMode: TabDisplayMode;
@@ -56,7 +58,7 @@ export const DEFAULT_PREFS: TabFlowPrefs = {
 	enablePinnedTabs: true,
 	pinnedIconOnly: false,
 	enableVirtualMembers: true,
-	enableCollectionAutoGroup: false,
+	newTabMode: 'independent',
 	multiCollectionStrategy: 'active',
 	enableTabRemarks: true,
 	remarkDisplayMode: 'both',
@@ -102,6 +104,7 @@ export function getPref<K extends keyof TabFlowPrefs>(key: K): TabFlowPrefs[K] {
 	const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
 	const fallback = DEFAULT_PREFS[key];
 	let val: TabFlowPrefs[K] = typeof raw !== typeof fallback ? fallback : (raw as TabFlowPrefs[K]);
+	if (key === 'newTabMode' && raw !== 'collection' && raw !== 'independent') val = fallback;
 	const range = NUMERIC_RANGES[key];
 	if (range && typeof raw === 'number') {
 		val = (Number.isFinite(raw) ? Math.max(range[0], Math.min(range[1], Math.trunc(raw))) : fallback) as TabFlowPrefs[K];
@@ -122,6 +125,13 @@ const NUMERIC_RANGES: Partial<Record<keyof TabFlowPrefs, [number, number]>> = {
 export function setPref<K extends keyof TabFlowPrefs>(key: K, value: TabFlowPrefs[K]): void {
 	prefCache.delete(key);
 	Zotero.Prefs.set(PREF_PREFIX + key, value, true);
+}
+
+export function migrateNewTabMode(): void {
+	const key = PREF_PREFIX + 'newTabMode';
+	if (!Services.prefs.prefHasUserValue(key) && Zotero.Prefs.get(PREF_PREFIX + 'enableCollectionAutoGroup', true) === true) {
+		setPref('newTabMode', 'collection');
+	}
 }
 
 export function resetAllPrefs(): void {

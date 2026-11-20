@@ -226,16 +226,17 @@ export class VerticalSidebarController {
 			const tabsByGroup = indexGroupMembers(allTracked, (tab) => tab.groupId);
 			const virtualsByGroup = indexGroupMembers(matchingVirtuals, (member) => this.store.groupOfKey(member.key));
 			const collapsedIds = new Set(this.store.state.collapsed);
+			const showUngrouped = getPref('newTabMode') === 'collection' && !this.store.state.ungroupedHeadingHidden;
 			const renderedGroups = groups.filter((g) => {
 				const hasOpenMembers = tabsByGroup.has(g.id);
 				const hasVirtualMembers = virtualsByGroup.has(g.id);
-				const hasCustomHeading = !this.store.state.ungroupedHeadingHidden && Boolean(this.store.state.ungroupedName);
+				const hasCustomHeading = showUngrouped && Boolean(this.store.state.ungroupedName);
 				return shouldRenderGroupHeading(g.id, hasOpenMembers, hasVirtualMembers, hasCustomHeading);
 			});
 			for (const g of renderedGroups) {
 				const members = tabsByGroup.get(g.id) ?? [];
 				const virtuals = virtualsByGroup.get(g.id) ?? [];
-				const showHeading = Boolean(g.id) || !this.store.state.ungroupedHeadingHidden;
+				const showHeading = Boolean(g.id) || showUngrouped;
 				const collapsed = showHeading && collapsedIds.has(g.id);
 				const section = this.getGroupSection(g.id);
 				section.element.style.setProperty('--ztf-group-dot', g.color);
