@@ -186,12 +186,10 @@ export class TabContextMenuController {
 			if (getPref('enableSessions') && !this.store.readOnly) {
 				this.item(popup, t('zotero-tabflow-menu-archive-group', '保存到工作区并关闭…'), () => this.defer(() => {
 					const title = t('zotero-tabflow-menu-archive-group', '保存到工作区并关闭…');
-					const name = { value: group.name };
-					const message = t('zotero-tabflow-archive-name', '保存本组文献并关闭对应标签。请输入工作区名称。');
-					if (!Services.prompt.prompt(this.win, title, message, name, null, {}) || !name.value.trim()) return;
-					const idx = findMatchingSessionIndex(this.store.state, name.value.trim().slice(0, 60), 'manual');
+					const name = group.name.trim().slice(0, 60);
+					const idx = findMatchingSessionIndex(this.store.state, name, 'manual');
 					if (idx >= 0 && !Services.prompt.confirm(this.win, title, t('zotero-tabflow-archive-overwrite', '同名工作区已存在。要覆盖它吗？'))) return;
-					void this.actions.archiveGroup(group.id, name.value).then((remaining) => {
+					void this.actions.archiveGroup(group.id, name).then((remaining) => {
 						this.onRefresh();
 						if (remaining) Services.prompt.alert(this.win, title, t('zotero-tabflow-archive-remaining', '工作区已保存。仍有 { $count } 个标签未关闭，分组已保留。', { count: remaining }));
 					}).catch((error) => {
