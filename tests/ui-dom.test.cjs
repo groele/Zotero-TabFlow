@@ -298,20 +298,16 @@ test('SessionPreviewController renders modal overlay without XUL panel quirks, t
 	assert.equal(root.children.length, 0);
 });
 
-test('WorkspaceHubController manages sessions and only attempts to reopen closed members', async () => {
+test('WorkspaceHubController manages saved sessions, templates and rolling snapshots', async () => {
 	memPrefs.clear();
 	const { promoteRollingSnapshot } = require('../src/core/session-store.ts');
 	const { WorkspaceHubController, computeWorkspaceHubCounts } = require('../src/ui/workspace-hub.ts');
 
 	const store = new TabFlowStore();
-	const hiddenG = store.ensureGroup('Project Shelf');
-	store.assignKeys(['1:H1', '1:H2'], hiddenG.id);
-	const virtual = { key: '1:H1', itemID: 1, parentItemID: null, title: 'H1', shortTitle: 'H1', filename: 'h1.pdf', source: '', creatorYear: '', collection: 'C', type: 'reader' };
-	store.setGroupHidden(hiddenG.id, true, [virtual, { ...virtual, key: '1:H2', itemID: 2 }]);
 	const rolling = store.saveRollingSnapshot(['1:R1']);
 	assert.ok(rolling);
 
-	assert.deepEqual(computeWorkspaceHubCounts(store), { sessions: 0, hidden: 1, rolling: 1, total: 1 });
+	assert.deepEqual(computeWorkspaceHubCounts(store), { sessions: 0, rolling: 1, total: 0 });
 
 	const state = { activeElement: null };
 	const root = createFakeElement('window', state);
@@ -347,8 +343,8 @@ test('WorkspaceHubController manages sessions and only attempts to reopen closed
 	assert.equal(root.children.length, 1);
 	const box = root.children[0].children[0];
 	const body = box.children[1];
-	// Quick save bar + Hidden section + Sessions section + Rolling section
-	assert.equal(body.children.length, 4);
+	// Quick save bar + unified workspace section + Rolling section
+	assert.equal(body.children.length, 3);
 
 	// Inline save creates a manual session directly
 	const quickBar = body.children[0];
@@ -368,31 +364,9 @@ test('WorkspaceHubController manages sessions and only attempts to reopen closed
 	assert.equal(store.state.rollingSessions.length, 0);
 	assert.equal(store.state.sessions.length, 3);
 
-	// Restore the group and leave the open member alone.
-	const hiddenCard = body.children[1].children[1];
-	const reopen = hiddenCard.children[1].children[1];
-	assert.match(reopen.textContent, /1/);
-	reopen.click();
-	await Promise.resolve();
-	assert.deepEqual(attempts, [2]);
-	assert.match(box.children[2].textContent, /0.*1/);
-	assert.ok(store.state.virtualMembers['1:H2']);
-	assert.deepEqual(computeWorkspaceHubCounts(store), { sessions: 3, hidden: 0, rolling: 0, total: 3 });
-
-	globalThis.Services = { prompt: { confirm: () => true, alert() {} } };
-	store.setGroupHidden(hiddenG.id, true);
-	hub.renderContent();
-	const hiddenCardAgain = body.children[1].children[1];
-	const dissolve = hiddenCardAgain.children[1].children.at(-1);
-	dissolve.click();
-	assert.equal(store.state.groups.some((group) => group.id === hiddenG.id), false);
-	assert.equal(store.groupOfKey('1:H2'), '');
-	assert.equal(store.state.virtualMembers['1:H2'].itemID, 2, 'dissolving a group keeps its closed virtual document');
-	assert.ok(refreshCalls >= 2, 'reopen and dissolve actions refresh the host UI');
-
 	const manualSession = store.state.sessions.find((session) => session.name === 'Draft Review');
 	hub.open();
-	const findManualCard = () => root.children[0].children[0].children[1].children[2].children.find((child) =>
+	const findManualCard = () => root.children[0].children[0].children[1].children[1].children.find((child) =>
 		child.className === 'ztf-hub-card' && child.children[0].children[0].textContent.includes('Draft Review'));
 	let sessionCard = findManualCard();
 	assert.ok(sessionCard);

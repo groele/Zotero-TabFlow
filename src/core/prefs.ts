@@ -13,7 +13,6 @@ export type NewTabMode = 'independent' | 'collection';
 export interface TabFlowPrefs {
 	enableHorizontalGroups: boolean;
 	horizontalTabCompactMode: HorizontalTabCompactMode;
-	enableGroupHiding: boolean;
 	compactTopBar: boolean;
 	enableVerticalSidebar: boolean;
 	enableBatchSelection: boolean;
@@ -51,7 +50,6 @@ export interface TabFlowPrefs {
 export const DEFAULT_PREFS: TabFlowPrefs = {
 	enableHorizontalGroups: true,
 	horizontalTabCompactMode: 'auto',
-	enableGroupHiding: true,
 	compactTopBar: false,
 	enableVerticalSidebar: true,
 	enableBatchSelection: true,

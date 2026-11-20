@@ -184,7 +184,6 @@ export async function executeSessionRestorePlan(
 
 export function buildPublicationGroupSuggestions(store: TabFlowStore, tracked: readonly TrackedTab[]): PublicationGroupSuggestion[] {
 	const visibleGroups = new Map(store.visibleGroups().filter((g) => g.id).map((g) => [g.name, g.id]));
-	const hiddenNames = new Set(store.hiddenGroups().map((g) => g.name));
 	const buckets = new Map<string, { keys: string[]; titles: string[] }>();
 	for (const t of tracked) {
 		if (t.groupId || t.pinned || !t.source.trim()) continue;
@@ -197,7 +196,7 @@ export function buildPublicationGroupSuggestions(store: TabFlowStore, tracked: r
 		buckets.set(venue, bucket);
 	}
 	return [...buckets.entries()]
-		.filter(([venue, b]) => visibleGroups.has(venue) || (!hiddenNames.has(venue) && b.keys.length >= 2))
+		.filter(([venue, b]) => visibleGroups.has(venue) || b.keys.length >= 2)
 		.map(([venue, b]) => ({
 			venue,
 			keys: b.keys,
@@ -210,7 +209,6 @@ export function buildPublicationGroupSuggestions(store: TabFlowStore, tracked: r
 export function applyPublicationGroupSuggestions(store: TabFlowStore, chosen: readonly PublicationGroupSuggestion[]): void {
 	for (const suggestion of chosen) {
 		const visible = store.visibleGroups().find((group) => group.id && group.name === suggestion.venue);
-		if (!visible && store.hiddenGroups().some((group) => group.name === suggestion.venue)) continue;
 		const keys = suggestion.keys.filter((key) => !store.groupOfKey(key));
 		if (!keys.length) continue;
 		const group = visible ?? store.ensureGroup(suggestion.venue);

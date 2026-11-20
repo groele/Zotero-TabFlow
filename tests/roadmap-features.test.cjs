@@ -62,12 +62,8 @@ test('a failed reader open preserves the virtual entry and a successful retry cl
 		assert.equal(store.state.virtualMembers['1:PDF'], virtual);
 		assert.equal(store.groupOfKey('1:PDF'), group.id);
 		Zotero.Reader.open = async (id) => { opened.push(id); };
-		store.setGroupHidden(group.id, true);
-		await actions.openVirtualOrItem(42);
-		assert.equal(store.state.virtualMembers['1:PDF'], virtual);
-		store.setGroupHidden(group.id, false);
 		await actions.openVirtualOrItem(42, group.id);
-		assert.deepEqual(opened, [42, 42]);
+		assert.deepEqual(opened, [42]);
 		assert.equal(store.state.virtualMembers['1:PDF'], undefined);
 	} finally {
 		Zotero.Items = oldItems;
@@ -75,40 +71,27 @@ test('a failed reader open preserves the virtual entry and a successful retry cl
 	}
 });
 
-test('publication grouping skips hidden destinations, including groups hidden after preview', () => {
-	memPrefs.clear();
-	const store = new TabFlowStore();
-	const group = store.ensureGroup('Nature');
-	const tracked = ['1:A', '1:B'].map((key) => ({ key, title: key, source: 'Nature', groupId: '' }));
-	const suggestions = buildPublicationGroupSuggestions(store, tracked);
-	assert.equal(suggestions[0].existingGroupId, group.id);
-	store.setGroupHidden(group.id, true);
-	assert.deepEqual(buildPublicationGroupSuggestions(store, tracked), []);
-	applyPublicationGroupSuggestions(store, suggestions);
-	assert.equal(store.groupOfKey('1:A'), '');
-	assert.equal(store.groupOfKey('1:B'), '');
-});
-
 test('sidebar status excludes an open tab backup from the virtual count', () => {
 	memPrefs.clear();
 	const store = new TabFlowStore();
 	const group = store.ensureGroup('Hidden');
 	store.assignKeys(['1:OPEN', '1:CLOSED'], group.id);
-	store.setGroupHidden(group.id, true, [{ key: '1:OPEN' }, { key: '1:CLOSED' }]);
+	store.saveVirtualMember({ key: '1:OPEN' });
+	store.saveVirtualMember({ key: '1:CLOSED' });
 	assert.equal(computeWorkspaceStatusCounts([{ key: '1:OPEN', status: 'active' }], store).virtual, 1);
 	assert.equal(computeWorkspaceStatusCounts([], store).virtual, 2);
 });
 
-test('session round trip resolves hidden virtual members by key with new local IDs', async () => {
+test('session round trip resolves virtual members by key with new local IDs', async () => {
 	memPrefs.clear();
 	const source = new TabFlowStore();
 	const group = source.ensureGroup('Archive');
 	source.assignKeys(['1:PDF', '1:MISSING'], group.id);
 	const metadata = { shortTitle: 'Paper', filename: '', source: '', creatorYear: '', collection: '', type: 'reader' };
-	source.setGroupHidden(group.id, true, [
+	for (const member of [
 		{ ...metadata, key: '1:PDF', title: 'Paper', itemID: 12, parentItemID: 13 },
 		{ ...metadata, key: '1:MISSING', title: 'Missing paper', itemID: 14, parentItemID: null },
-	]);
+	]) source.saveVirtualMember(member);
 	const resolve = async (_library, key) => key === 'PDF' ? { id: 92, parentItemID: 93 } : null;
 	const snapshot = source.saveSession('Hidden archive', []);
 	assert.equal(snapshot.virtualMembers[0].itemID, undefined);
@@ -125,10 +108,8 @@ test('session round trip resolves hidden virtual members by key with new local I
 	assert.equal(target.state.virtualMembers['1:PDF'].itemID, 92);
 	assert.equal(target.state.virtualMembers['1:PDF'].parentItemID, 93);
 	assert.equal(target.groupOfKey('1:PDF'), group.id);
-	assert.equal(target.hiddenGroups()[0].id, group.id);
 	assert.equal(target.state.ungroupedName, undefined);
 	assert.equal(target.state.ungroupedColor, '#737373');
-	target.setGroupHidden(group.id, false);
 	assert.equal(target.state.virtualMembers['1:PDF'].itemID, 92);
 });
 const { shouldRenderGroupHeading } = require('../src/ui/group-visibility.ts');
@@ -139,88 +120,6 @@ test('empty default ungrouped heading stays hidden beside named groups', () => {
 	assert.equal(shouldRenderGroupHeading('', true, false, false), true);
 	assert.equal(shouldRenderGroupHeading('', false, true, false), true);
 	assert.equal(shouldRenderGroupHeading('', false, false, true), true);
-});
-
-test('hidden project keeps assignments, virtual members and pins after reloading', () => {
-	memPrefs.clear();
-	const store = new TabFlowStore();
-	const group = store.ensureGroup('Completed project');
-	store.assignKey('1:ABC', group.id);
-	store.setRemark('1:ABC', 'Keep this note');
-	store.setPinnedKeys(['1:ABC'], true);
-	store.setCollapsed(group.id, true);
-	store.setGroupHidden(group.id, true, [{ key: '1:ABC', itemID: 42 }]);
-	const reloaded = new TabFlowStore();
-	reloaded.load();
-	assert.deepEqual(reloaded.hiddenGroups().map((g) => g.id), [group.id]);
-	assert.ok(!reloaded.visibleGroups().some((g) => g.id === group.id));
-	assert.equal(reloaded.groupOfKey('1:ABC'), group.id);
-	assert.equal(reloaded.getRemark('1:ABC').note, 'Keep this note');
-	assert.equal(reloaded.state.virtualMembers['1:ABC'].itemID, 42);
-	assert.ok(reloaded.isPinned('1:ABC'));
-	assert.ok(reloaded.state.collapsed.includes(group.id));
-	setPref('enableGroupHiding', false);
-	assert.ok(reloaded.visibleGroups().some((g) => g.id === group.id));
-	setPref('enableGroupHiding', true);
-	reloaded.setGroupHidden(group.id, false);
-	assert.deepEqual(reloaded.hiddenGroups(), []);
-	assert.ok(reloaded.visibleGroups().some((g) => g.id === group.id));
-});
-
-test('hiding a named ungrouped section promotes its members without hiding the ungrouped area', () => {
-	memPrefs.clear();
-	const store = new TabFlowStore();
-	store.renameGroup('', 'hello');
-	store.setGroupColor('', '#123456');
-	store.setCollapsed('', true);
-	const existing = store.ensureGroup('hello');
-	store.assignKey('1:OTHER', existing.id);
-	store.state.virtualMembers['1:VIRTUAL'] = { key: '1:VIRTUAL', itemID: 7 };
-	store.hideUngrouped(['1:OPEN', '1:OTHER']);
-	const [project] = store.hiddenGroups();
-	assert.equal(project.name, 'hello (2)');
-	assert.equal(project.color, '#123456');
-	assert.equal(store.groupOfKey('1:OPEN'), project.id);
-	assert.equal(store.groupOfKey('1:VIRTUAL'), project.id);
-	assert.equal(store.groupOfKey('1:OTHER'), existing.id);
-	assert.equal(store.groupOfKey('1:NEW'), '');
-	assert.ok(store.visibleGroups().some((g) => g.id === ''));
-	assert.ok(store.state.collapsed.includes(project.id));
-	assert.equal(store.state.ungroupedName, undefined);
-});
-
-test('default ungrouped documents can be hidden and restored while new tabs stay ungrouped', () => {
-	memPrefs.clear();
-	const store = new TabFlowStore();
-	const meta = { buildTrackedTabs: () => [
-		{ key: '1:OPEN', groupId: '', itemID: 42, tab: { type: 'reader' } },
-		{ key: '1:NEXT', groupId: '', itemID: 43, tab: { type: 'reader' } },
-	] };
-	new TabActionService({}, store, meta).hideGroup('');
-	const [group] = store.hiddenGroups();
-	assert.ok(group.name);
-	assert.equal(store.groupOfKey('1:OPEN'), group.id);
-	assert.equal(store.groupOfKey('1:NEXT'), group.id);
-	assert.equal(store.state.virtualMembers['1:OPEN'].itemID, 42);
-	assert.equal(store.groupOfKey('1:NEW'), '');
-	assert.ok(!store.visibleGroups().some((entry) => entry.id === group.id));
-	store.setGroupHidden(group.id, false);
-	assert.ok(store.visibleGroups().some((entry) => entry.id === group.id));
-	assert.equal(store.groupOfKey('1:OPEN'), group.id);
-});
-
-test('collection auto-grouping leaves new tabs visible when a matching group is hidden', () => {
-	memPrefs.clear();
-	const store = new TabFlowStore();
-	const old = store.ensureGroup('Completed');
-	store.setGroupHidden(old.id, true);
-	const meta = { buildTrackedTabs: () => [{ tab: { id: 'new' }, key: '1:NEW', groupId: '', collection: 'Completed' }] };
-	const actions = new TabActionService({}, store, meta);
-	assert.equal(actions.autoGroupByCollection(), 0);
-	assert.equal(store.groupOfKey('1:NEW'), '');
-	store.setGroupHidden(old.id, false);
-	assert.equal(actions.autoGroupByCollection(), 1);
-	assert.equal(store.groupOfKey('1:NEW'), old.id);
 });
 
 test('session restore plan previews open, missing, reassigned, pin diffs and saves pre-replace backup', async () => {

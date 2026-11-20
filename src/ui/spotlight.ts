@@ -134,8 +134,6 @@ export class SpotlightController {
 		const tabs = this.meta.buildTrackedTabs();
 		const groups = this.store.orderedGroups();
 		const names = new Map(groups.map((group) => [group.id, group.name]));
-		const hiddenGroups = this.store.hiddenGroups();
-		const hiddenIds = new Set(hiddenGroups.map((group) => group.id));
 		const matches = (value: string) => terms.every((term) => value.toLowerCase().includes(term));
 		const tabMatches = (tab: typeof tabs[number]) =>
 			matches(`${this.store.getRemark(tab.key).note} ${tab.title} ${tab.shortTitle} ${tab.filename} ${tab.collection} ${tab.creatorYear} ${names.get(tab.groupId) ?? ''}`);
@@ -145,7 +143,7 @@ export class SpotlightController {
 		}
 
 		const tabEntries: SpotEntry[] = (q.startsWith('>') && !tabsMode) || libMode ? [] : tabs
-			.filter((tab) => !hiddenIds.has(tab.groupId) && tabMatches(tab))
+			.filter((tab) => tabMatches(tab))
 			.map((tab) => {
 				const gName = names.get(tab.groupId) || t('zotero-tabflow-ungrouped', '未分组');
 				const r = getPref('enableTabRemarks') ? this.store.getRemark(tab.key).note : '';
@@ -156,7 +154,7 @@ export class SpotlightController {
 		const visibleVirtuals: SpotEntry[] = (q.startsWith('>') && !tabsMode) || libMode || tabsMode || !getPref('enableVirtualMembers') ? []
 			: Object.values(this.store.state.virtualMembers).flatMap((m) => {
 				const gid = this.store.groupOfKey(m.key);
-				if (openKeys.has(m.key) || hiddenIds.has(gid) || !matches(`${this.store.getRemark(m.key).note} ${m.title} ${m.shortTitle} ${m.filename} ${m.collection} ${m.creatorYear} ${names.get(gid) ?? ''}`)) return [];
+				if (openKeys.has(m.key) || !matches(`${this.store.getRemark(m.key).note} ${m.title} ${m.shortTitle} ${m.filename} ${m.collection} ${m.creatorYear} ${names.get(gid) ?? ''}`)) return [];
 				const r = getPref('enableTabRemarks') ? this.store.getRemark(m.key).note : '';
 				return [{ label: `◌ ${r || m.title}`, hint: `${names.get(gid) || t('zotero-tabflow-ungrouped', '未分组')} · ${t('zotero-tabflow-spot-virtual-hint', '虚拟保留')}`, run: () => void this.actions.openVirtualOrItem(m.itemID, gid, false, m.key).then((ok) => { if (!ok) Services.prompt.alert(this.win, m.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。')); this.onRefresh(); }) }];
 			});
@@ -188,42 +186,9 @@ export class SpotlightController {
 			}))
 			.filter((e) => !terms.length || terms.every((term) => `${e.label} ${e.hint}`.toLowerCase().includes(term)));
 
-		const hiddenDocuments = libMode || (q.startsWith('>') && !tabsMode) ? [] : [
-			...tabs.filter((tab) => hiddenIds.has(tab.groupId) && tabMatches(tab)).map((tab) => ({
-				groupId: tab.groupId,
-				label: this.store.getRemark(tab.key).note || tab.title,
-				hint: `${names.get(tab.groupId)} · ${t('zotero-tabflow-spot-hidden-select', '仅切换至此标签')}`,
-				run: () => this.actions.selectTab(tab.tab.id),
-			})),
-			...(!tabsMode && getPref('enableVirtualMembers') ? Object.values(this.store.state.virtualMembers).flatMap((member) => {
-				const groupId = this.store.groupOfKey(member.key);
-				if (openKeys.has(member.key) || !hiddenIds.has(groupId) || !matches(`${this.store.getRemark(member.key).note} ${member.title} ${member.shortTitle} ${member.filename} ${member.collection} ${names.get(groupId)}`)) return [];
-				return [{
-					groupId,
-					label: (getPref('enableTabRemarks') ? this.store.getRemark(member.key).note : '') || member.title,
-					hint: `${names.get(groupId)} · ${t('zotero-tabflow-spot-hidden-open', '仅打开这篇文献')}`,
-					run: () => {
-						void this.actions.openVirtualOrItem(member.itemID, undefined, false, member.key).then((opened) => {
-							if (!opened) Services.prompt.alert(this.win, member.title, t('zotero-tabflow-spot-hidden-open-failed', '未能打开这篇文献。请检查附件文件是否可用。'));
-							this.onRefresh();
-						});
-					},
-				}];
-			}) : []),
-		];
-		const matchedHiddenIds = new Set(hiddenDocuments.map((entry) => entry.groupId));
-		const restoreHint = t('zotero-tabflow-spot-hidden-hint', '恢复分组');
-		const hiddenEntries: SpotEntry[] = libMode ? [] : hiddenGroups
-			.filter((g) => matchedHiddenIds.has(g.id) || (!tabsMode && matches(`${g.name} ${restoreHint}`)))
-			.map((g) => ({
-				label: g.name,
-				hint: restoreHint,
-				run: () => { this.store.setGroupHidden(g.id, false); this.onRefresh(); },
-			}));
-
 		const cmdEntries: SpotEntry[] = libMode ? [] : [
-			...(getPref('enableSessions') || getPref('enableGroupHiding') ? [{
-				label: `🗂️ ${t('zotero-tabflow-spot-cmd-workspace', '打开 TabFlow 工作区（会话与隐藏项目）…')}`,
+			...(getPref('enableSessions') ? [{
+				label: `🗂️ ${t('zotero-tabflow-spot-cmd-workspace', '打开 TabFlow 工作区…')}`,
 				hint: t('zotero-tabflow-spot-hint-workspace', '工作区'),
 				run: () => this.win.setTimeout(() => this.popovers.openWorkspaceHub(), 0),
 			}] : []),
@@ -276,7 +241,6 @@ export class SpotlightController {
 			: [
 				[t('zotero-tabflow-spot-section-tabs', '打开的标签'), allTabEntries],
 				[t('zotero-tabflow-spot-section-library', '文库文献'), libraryEntries],
-				[t('zotero-tabflow-spot-section-hidden', '隐藏项目'), [...hiddenDocuments, ...hiddenEntries]],
 				[t('zotero-tabflow-spot-section-sessions', '会话与快照'), tabsMode ? [] : sessionEntries],
 				[t('zotero-tabflow-spot-section-actions', '操作'), tabsMode ? [] : cmdEntries],
 			] as const;

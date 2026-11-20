@@ -1,9 +1,10 @@
 import { computeNativeTabMoveTarget } from '../core/drag-utils.ts';
+import { findMatchingSessionIndex, MAX_MANUAL_SESSIONS } from '../core/session-store.ts';
 import { getPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { NativeTabLike, TabCloseOptions, TrackedTab, VirtualMemberMeta } from '../core/types.ts';
 import { openAttachmentFolder } from './attachment-folder.ts';
-import { uncategorizedCollectionLabel, type ItemMetadataService } from './item-metadata.ts';
+import { uncategorizedCollectionLabel, ItemMetadataService } from './item-metadata.ts';
 import { parseItemFullKey } from './session-restore.ts';
 
 export function isTabBusyOrProtected(
@@ -94,20 +95,40 @@ export class TabActionService {
 		return toClose.length;
 	}
 
-	hideGroup(groupId: string): void {
-		const tabs = this.meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId);
-		const members = tabs.map(toVirtualMember).filter((member) => member !== null);
-		if (groupId) this.store.setGroupHidden(groupId, true, members);
-		else this.store.hideUngrouped(tabs.map((tab) => tab.key), members);
-		const selectedID = this.meta.getSelectedTabID?.();
-		if (selectedID && tabs.some((tab) => tab.tab.id === selectedID)) {
-			const visibleIDs = new Set(this.store.visibleGroups().map((group) => group.id));
-			const fallback = this.meta.buildTrackedTabs().find((tab) => visibleIDs.has(tab.groupId))?.tab.id
-				|| this.meta.getNativeTabs?.().find((tab) => tab.type === 'library')?.id;
-			if (fallback && fallback !== selectedID) {
-				void Promise.resolve((this.win as any).Zotero_Tabs?.select?.(fallback)).catch((error) => Zotero.logError(error as Error));
-			}
+	async archiveGroup(groupId: string, name: string): Promise<number> {
+		if (this.store.readOnly || (groupId && !this.store.state.groups.some((group) => group.id === groupId))) {
+			throw new Error('Workspace cannot be archived');
 		}
+		if (this.store.state.sessions.length >= MAX_MANUAL_SESSIONS
+			&& findMatchingSessionIndex(this.store.state, name.trim().slice(0, 60), 'manual') < 0) {
+			throw new Error('Workspace capacity reached');
+		}
+		const windows = groupId ? [this.win, ...(Zotero.getMainWindows?.() ?? [])] : [this.win];
+		const targets = [...new Set(windows)].map((win) => {
+			const meta = win === this.win ? this.meta : new ItemMetadataService(win, this.store);
+			const actions = win === this.win ? this : new TabActionService(win, this.store, meta);
+			return { meta, actions, tabs: meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId) };
+		});
+		const members = Object.values(this.store.state.virtualMembers)
+			.filter((member) => this.store.groupOfKey(member.key) === groupId);
+		const prior = this.store.state.sessions.find((session) =>
+			session.scopedGroupId === groupId && session.name === name.trim().slice(0, 60));
+		this.store.saveGroupSession(name, groupId, [
+			...targets.flatMap(({ tabs }) => tabs.map((tab) => tab.key)), ...members.map((member) => member.key), ...(prior?.openKeys ?? []),
+		]);
+
+		for (const { actions, tabs } of targets) {
+			await actions.closeTabs(tabs.map((tab) => tab.tab.id), { preserveVirtual: false, protectMedia: true });
+		}
+		const remaining = targets.reduce((count, { meta }) =>
+			count + meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId).length, 0);
+		if (remaining) return remaining;
+		for (const member of members) {
+			if (this.store.state.virtualMembers[member.key] === member) delete this.store.state.virtualMembers[member.key];
+		}
+		if (groupId) this.store.dissolveGroup(groupId);
+		else if (members.length) this.store.save();
+		return 0;
 	}
 
 	undoCloseTab(): boolean {
@@ -189,9 +210,7 @@ export class TabActionService {
 				await Zotero.Reader.open(target.id, undefined, { openInBackground });
 			}
 			if (groupId !== undefined) this.store.assignKey(key, groupId);
-			const currentGroup = this.store.groupOfKey(key);
-			const hidden = this.store.state.groups.some((group) => group.id === currentGroup && group.hidden === true);
-			if (!hidden && virtual && this.store.state.virtualMembers[key] === virtual) this.store.removeVirtualMember(key);
+			if (virtual && this.store.state.virtualMembers[key] === virtual) this.store.removeVirtualMember(key);
 			return true;
 		} catch (error) {
 			Zotero.logError(error as Error);
@@ -207,13 +226,12 @@ export class TabActionService {
 
 	autoGroupByCollection(onlyTabIDs?: ReadonlySet<string>): number {
 		if (this.store.readOnly) return 0;
-		const hiddenNames = new Set(this.store.hiddenGroups().map((group) => group.name));
 		const uncategorized = uncategorizedCollectionLabel();
 		const byCollection = new Map<string, Set<string>>();
 		for (const tab of this.meta.buildTrackedTabs(onlyTabIDs)) {
 			const name = tab.collection.trim().slice(0, 60);
 			if (!name || tab.groupId || tab.pinned || tab.key.startsWith('tab:')
-				|| name === uncategorized || hiddenNames.has(name)) continue;
+				|| name === uncategorized) continue;
 			if (!byCollection.has(name)) byCollection.set(name, new Set());
 			byCollection.get(name)!.add(tab.key);
 		}

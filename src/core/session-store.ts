@@ -207,7 +207,7 @@ export function buildGroupSessionSnapshot(
 		id: `s-${now}-${Math.random().toString(36).slice(2, 6)}`,
 		name: name.trim().slice(0, 60) || targetGroup?.name || t('zotero-tabflow-session-default-name', '工作区会话'),
 		createdAt: now,
-		groups: targetGroup ? [{ ...targetGroup, hidden: undefined }] : [],
+		groups: targetGroup ? [{ ...targetGroup }] : [],
 		assignments,
 		pinned: state.pinned.filter((k) => scopedKeys.has(k)),
 		openKeys: scopedOpen,

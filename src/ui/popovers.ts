@@ -123,7 +123,7 @@ export class PopoverController {
 	}
 
 	openWorkspaceHub(anchor?: HTMLElement): void {
-		if (!getPref('enableSessions') && !getPref('enableGroupHiding')) return;
+		if (!getPref('enableSessions')) return;
 		this.hub.open(anchor);
 	}
 

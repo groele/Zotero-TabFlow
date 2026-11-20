@@ -325,11 +325,11 @@ export class HorizontalBarController {
 			});
 		}
 		const hubCounts = computeWorkspaceHubCounts(this.store);
-		if (getPref('enableSessions') || getPref('enableGroupHiding')) {
+		if (getPref('enableSessions')) {
 			actions.push({
-				id: 'workspace', icon: 'workspace', popup: 'dialog', count: hubCounts.hidden,
+				id: 'workspace', icon: 'workspace', popup: 'dialog', count: hubCounts.total,
 				label: t('zotero-tabflow-workspace-btn', '工作区'),
-				title: t('zotero-tabflow-toolbar-workspace-tip', `隐藏项目 ${hubCounts.hidden}`, { count: hubCounts.hidden }),
+				title: t('zotero-tabflow-toolbar-workspace-tip', `已保存的工作区 ${hubCounts.total}`, { count: hubCounts.total }),
 				run: (button) => this.popovers.openWorkspaceHub(button),
 			});
 		}

@@ -118,37 +118,7 @@ test('import does not evict existing sessions when capacity runs out', () => {
 	assert.deepEqual(store.state.sessions.slice(1).map((session) => session.id), ids);
 });
 
-test('hiding an active group switches Zotero to a visible tab or library and virtual fallback resolves by key', async () => {
-	const { store, items, tabs, actions, meta } = fixture();
-	const group = store.ensureGroup('Active');
-	const other = store.ensureGroup('Visible');
-	items.set(1, { id: 1, libraryID: 1, key: 'AAA', isAttachment: () => true, isFileAttachment: () => false });
-	items.set(2, { id: 2, libraryID: 1, key: 'BBB', isAttachment: () => true, isFileAttachment: () => false });
-	tabs._tabs.push({ id: 'tab-1', type: 'reader', data: { itemID: 1 } }, { id: 'tab-2', type: 'reader', data: { itemID: 2 } });
-	tabs.selectedID = 'tab-1';
-	const selectedCalls = [];
-	tabs.select = (id) => { selectedCalls.push(id); tabs.selectedID = id; };
-	store.assignKey('1:AAA', group.id);
-	store.assignKey('1:BBB', other.id);
-	actions.hideGroup(group.id);
-	assert.deepEqual(selectedCalls, ['tab-2']);
-
-	actions.hideGroup(other.id);
-	assert.deepEqual(selectedCalls, ['tab-2', 'library']);
-
-	const opened = [];
-	Zotero.Items.getByLibraryAndKeyAsync = async (_lib, key) => key === 'ZZZ'
-		? { id: 99, libraryID: 1, key: 'ZZZ', isNote: () => false, isAttachment: () => true, isFileAttachment: () => false }
-		: null;
-	Zotero.Reader.open = async (id) => { opened.push(id); };
-	assert.equal(await actions.openVirtualOrItem(999, undefined, false, '1:ZZZ'), true);
-	assert.deepEqual(opened, [99]);
-
-	Zotero.Utilities = { Internal: { renderItemTitle: (v) => `<i>${v}</i>` } };
-	assert.equal(meta.plainTitle('Title'), 'Title');
-});
-
-test('Spotlight includes visible virtual members, searches hidden remarks, and toggles on Ctrl+P', () => {
+test('Spotlight includes visible virtual members, searches remarks, and toggles on Ctrl+P', () => {
 	const { store, win } = fixture();
 	const { SpotlightController } = require('../src/ui/spotlight.ts');
 	const state = { activeElement: null };
@@ -187,7 +157,7 @@ test('Spotlight includes visible virtual members, searches hidden remarks, and t
 	store.assignKey('1:HID', hid.id);
 	store.setRemark('1:HID', 'TargetRemark');
 	store.saveVirtualMember({ key: '1:VIS', itemID: 11, parentItemID: null, title: 'Visible Virtual', shortTitle: 'VV', filename: 'v.pdf', source: '', creatorYear: '', collection: '', type: 'reader' });
-	store.setGroupHidden(hid.id, true, [{ key: '1:HID', itemID: 12, parentItemID: null, title: 'Hidden Virtual', shortTitle: 'HV', filename: 'h.pdf', source: '', creatorYear: '', collection: '', type: 'reader' }]);
+	store.saveVirtualMember({ key: '1:HID', itemID: 12, parentItemID: null, title: 'Hidden Virtual', shortTitle: 'HV', filename: 'h.pdf', source: '', creatorYear: '', collection: '', type: 'reader' });
 	const spotlight = new SpotlightController(win, doc, store, { buildTrackedTabs: () => [], getSelectedTabID: () => '' }, { selectTab() {}, undoCloseTab() {}, autoGroupByCollection() {} }, { openWorkspaceHub() {}, openPublicationSuggest() {}, previewAndRestoreSession() {} }, () => {});
 	spotlight.init();
 	listeners.get('keydown')({ ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, key: 'p', preventDefault() {}, stopPropagation() {} });
@@ -585,4 +555,23 @@ test('legacy auto grouping migrates once and respects a subsequent user choice',
 	} finally {
 		globalThis.Services = previous;
 	}
+});
+
+test('archiving stores a scoped workspace before closing its tabs and removes the active group', async () => {
+	const { store, items, tabs, actions } = fixture();
+	const group = store.ensureGroup('Archive');
+	for (const id of [1, 2]) {
+		items.set(id, { id, libraryID: 1, key: String(id) });
+		tabs._tabs.push({ id: 'tab-' + id, type: 'reader', data: { itemID: id } });
+	}
+	store.assignKey('1:1', group.id);
+	tabs.close = (id) => {
+		assert.deepEqual(store.state.sessions[0].openKeys, ['1:1']);
+		assert.equal(id, 'tab-1');
+		tabs._tabs = tabs._tabs.filter((tab) => tab.id !== id);
+	};
+	assert.equal(await actions.archiveGroup(group.id, 'Archive'), 0);
+	assert.equal(store.state.groups.length, 0);
+	assert.equal(store.state.sessions[0].groups[0].id, group.id);
+	assert.ok(tabs._tabs.some((tab) => tab.id === 'tab-2'));
 });

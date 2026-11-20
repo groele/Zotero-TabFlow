@@ -18,7 +18,6 @@ export interface TabGroup {
 	id: string;
 	name: string;
 	color: string;
-	hidden?: boolean;
 }
 
 export interface TabRemark {

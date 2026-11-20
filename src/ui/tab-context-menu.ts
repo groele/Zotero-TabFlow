@@ -153,9 +153,6 @@ export class TabContextMenuController {
 			if (!group.id) {
 				const ungroupedTabs = this.meta.buildTrackedTabs().filter((tab) => !tab.groupId);
 				const ungrouped = ungroupedTabs.filter((tab) => !tab.pinned);
-				if (getPref('enableGroupHiding') && (ungroupedTabs.length || virtualMembers.length)) {
-					this.item(popup, t('zotero-tabflow-hide-ungrouped', '隐藏当前未分组文献'), () => this.actions.hideGroup(''));
-				}
 				this.item(popup, t('zotero-tabflow-menu-convert-ungrouped', `将未分组文献转为新分组… (${ungrouped.length})`, { count: ungrouped.length }), () => {
 					this.defer(() => {
 						const val = { value: '' };
@@ -166,10 +163,6 @@ export class TabContextMenuController {
 						}
 					});
 				}, { disabled: !ungrouped.length });
-			} else {
-				if (getPref('enableGroupHiding')) {
-					this.item(popup, t('zotero-tabflow-hide-group', '隐藏分组'), () => this.actions.hideGroup(group.id));
-				}
 			}
 			this.item(popup, t('zotero-tabflow-dissolve-group', '解散此分组'), () => this.defer(() => this.confirmDissolve(group)));
 			const colorMenu = this.xul('menu');
@@ -191,36 +184,21 @@ export class TabContextMenuController {
 			});
 			popup.append(this.xul('menuseparator'));
 			if (getPref('enableSessions') && !this.store.readOnly) {
-				const promptSave = (defaultName: string, scopeGroup: boolean) => {
-					const idx = findMatchingSessionIndex(this.store.state, defaultName, 'manual');
-					const label = idx >= 0
-						? t('zotero-tabflow-sessions-overwrite-prompt', '已存在同名工作区，确认将覆盖更新为当前最新状态（也可改名另存）：')
-						: t('zotero-tabflow-sessions-save-prompt', '请输入会话名称：');
-					const val = { value: defaultName };
-					if (!Services.prompt.prompt(this.win, t('zotero-tabflow-hub-save-session', '保存工作区'), label, val, null, {})) return;
-					const keys = this.meta.buildTrackedTabs().map((tab) => tab.key);
-					if (scopeGroup) this.store.saveGroupSession(val.value, group.id, keys);
-					else this.store.saveSession(val.value, keys);
-					this.onRefresh();
-				};
-				this.item(popup, `💾 ${t('zotero-tabflow-menu-save-to-workspace', '保存到工作区…')}`, () => {
-					this.defer(() => {
-						const baseName = (group.id || this.store.state.ungroupedName)
-							? group.name
-							: t('zotero-tabflow-session-default-name', '工作区会话');
-						promptSave(baseName, false);
+				this.item(popup, t('zotero-tabflow-menu-archive-group', '保存到工作区并关闭…'), () => this.defer(() => {
+					const title = t('zotero-tabflow-menu-archive-group', '保存到工作区并关闭…');
+					const name = { value: group.name };
+					const message = t('zotero-tabflow-archive-name', '保存本组文献并关闭对应标签。请输入工作区名称。');
+					if (!Services.prompt.prompt(this.win, title, message, name, null, {}) || !name.value.trim()) return;
+					const idx = findMatchingSessionIndex(this.store.state, name.value.trim().slice(0, 60), 'manual');
+					if (idx >= 0 && !Services.prompt.confirm(this.win, title, t('zotero-tabflow-archive-overwrite', '同名工作区已存在。要覆盖它吗？'))) return;
+					void this.actions.archiveGroup(group.id, name.value).then((remaining) => {
+						this.onRefresh();
+						if (remaining) Services.prompt.alert(this.win, title, t('zotero-tabflow-archive-remaining', '工作区已保存。仍有 { $count } 个标签未关闭，分组已保留。', { count: remaining }));
+					}).catch((error) => {
+						Zotero.logError(error as Error);
+						Services.prompt.alert(this.win, title, t('zotero-tabflow-archive-failed', '无法保存并关闭工作区。'));
 					});
-				});
-				this.item(popup, `📦 ${t('zotero-tabflow-menu-save-group-workspace', '仅保存本组到工作区…')}`, () => {
-					this.defer(() => {
-						const baseName = group.name || t('zotero-tabflow-session-default-name', '工作区会话');
-						const idx = findMatchingSessionIndex(this.store.state, baseName, 'manual');
-						const suggested = idx >= 0 && this.store.state.sessions[idx]?.scopedGroupId === undefined
-							? `${baseName}（${t('zotero-tabflow-menu-group-tag', '仅本组')}）`
-							: baseName;
-						promptSave(suggested, true);
-					});
-				});
+				}));
 			}
 			this.item(popup, t('zotero-tabflow-menu-collapse-others', '折叠其他分组'), () => {
 				this.store.collapseOtherGroups(group.id);

@@ -95,41 +95,7 @@ export class TabFlowStore {
 		return order.map((id) => byId.get(id)).filter((g): g is TabGroup => Boolean(g));
 	}
 
-	visibleGroups(): TabGroup[] {
-		const groups = this.orderedGroups();
-		return getPref('enableGroupHiding') ? groups.filter((group) => group.hidden !== true) : groups;
-	}
-	hiddenGroups(): TabGroup[] { return getPref('enableGroupHiding') ? this.orderedGroups().filter((group) => group.hidden === true) : []; }
-
-	setGroupHidden(id: string, hidden: boolean, members: readonly VirtualMemberMeta[] = []): void {
-		const group = this.state.groups.find((candidate) => candidate.id === id);
-		if (!group || (group.hidden === true) === hidden || this.readOnly) return;
-		if (hidden) {
-			group.hidden = true;
-			for (const member of members) this.state.virtualMembers[member.key] = member;
-		} else delete group.hidden;
-		this.save();
-	}
-
-	hideUngrouped(openKeys: readonly string[], members: readonly VirtualMemberMeta[] = []): void {
-		if (this.readOnly) return;
-		const originalName = this.state.ungroupedName || t('zotero-tabflow-saved-ungrouped-name', '未分组文献');
-		const keys = [...new Set([...openKeys, ...Object.keys(this.state.virtualMembers)])].filter((key) => !this.groupOfKey(key));
-		if (!keys.length) return;
-		let name = originalName;
-		for (let i = 2; this.state.groups.some((g) => g.name === name); i++) {
-			const suffix = ` (${i})`;
-			name = originalName.slice(0, 60 - suffix.length) + suffix;
-		}
-		const group = this.addGroup(name, this.state.ungroupedColor);
-		group.hidden = true;
-		for (const key of keys) this.state.assignments[key] = group.id;
-		for (const member of members) this.state.virtualMembers[member.key] = member;
-		if (this.state.collapsed.includes('')) this.state.collapsed = [...this.state.collapsed.filter(Boolean), group.id];
-		if (this.state.groupDisplay['']) this.state.groupDisplay[group.id] = this.state.groupDisplay[''];
-		delete this.state.ungroupedName;
-		this.save();
-	}
+	visibleGroups(): TabGroup[] { return this.orderedGroups(); }
 
 	ensureGroup(name: string, persist = true): TabGroup {
 		const clean = name.trim().slice(0, 60) || t('zotero-tabflow-default-group-name', '新分组');

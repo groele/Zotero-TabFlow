@@ -35,7 +35,6 @@
   var DEFAULT_PREFS = {
     enableHorizontalGroups: true,
     horizontalTabCompactMode: "auto",
-    enableGroupHiding: true,
     compactTopBar: false,
     enableVerticalSidebar: true,
     enableBatchSelection: true,

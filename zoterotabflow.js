@@ -39,7 +39,6 @@
   var DEFAULT_PREFS = {
     enableHorizontalGroups: true,
     horizontalTabCompactMode: "auto",
-    enableGroupHiding: true,
     compactTopBar: false,
     enableVerticalSidebar: true,
     enableBatchSelection: true,
@@ -292,7 +291,7 @@
       id: `s-${now}-${Math.random().toString(36).slice(2, 6)}`,
       name: name.trim().slice(0, 60) || targetGroup?.name || t("zotero-tabflow-session-default-name", "工作区会话"),
       createdAt: now,
-      groups: targetGroup ? [{ ...targetGroup, hidden: void 0 }] : [],
+      groups: targetGroup ? [{ ...targetGroup }] : [],
       assignments,
       pinned: state.pinned.filter((k) => scopedKeys.has(k)),
       openKeys: scopedOpen,
@@ -479,39 +478,7 @@
       return order.map((id) => byId.get(id)).filter((g) => Boolean(g));
     }
     visibleGroups() {
-      const groups = this.orderedGroups();
-      return getPref("enableGroupHiding") ? groups.filter((group) => group.hidden !== true) : groups;
-    }
-    hiddenGroups() {
-      return getPref("enableGroupHiding") ? this.orderedGroups().filter((group) => group.hidden === true) : [];
-    }
-    setGroupHidden(id, hidden, members = []) {
-      const group = this.state.groups.find((candidate) => candidate.id === id);
-      if (!group || group.hidden === true === hidden || this.readOnly) return;
-      if (hidden) {
-        group.hidden = true;
-        for (const member of members) this.state.virtualMembers[member.key] = member;
-      } else delete group.hidden;
-      this.save();
-    }
-    hideUngrouped(openKeys, members = []) {
-      if (this.readOnly) return;
-      const originalName = this.state.ungroupedName || t("zotero-tabflow-saved-ungrouped-name", "未分组文献");
-      const keys = [.../* @__PURE__ */ new Set([...openKeys, ...Object.keys(this.state.virtualMembers)])].filter((key) => !this.groupOfKey(key));
-      if (!keys.length) return;
-      let name = originalName;
-      for (let i = 2; this.state.groups.some((g) => g.name === name); i++) {
-        const suffix = ` (${i})`;
-        name = originalName.slice(0, 60 - suffix.length) + suffix;
-      }
-      const group = this.addGroup(name, this.state.ungroupedColor);
-      group.hidden = true;
-      for (const key of keys) this.state.assignments[key] = group.id;
-      for (const member of members) this.state.virtualMembers[member.key] = member;
-      if (this.state.collapsed.includes("")) this.state.collapsed = [...this.state.collapsed.filter(Boolean), group.id];
-      if (this.state.groupDisplay[""]) this.state.groupDisplay[group.id] = this.state.groupDisplay[""];
-      delete this.state.ungroupedName;
-      this.save();
+      return this.orderedGroups();
     }
     ensureGroup(name, persist = true) {
       const clean = name.trim().slice(0, 60) || t("zotero-tabflow-default-group-name", "新分组");
@@ -1199,7 +1166,6 @@
   }
   function buildPublicationGroupSuggestions(store, tracked) {
     const visibleGroups = new Map(store.visibleGroups().filter((g) => g.id).map((g) => [g.name, g.id]));
-    const hiddenNames = new Set(store.hiddenGroups().map((g) => g.name));
     const buckets = /* @__PURE__ */ new Map();
     for (const t2 of tracked) {
       if (t2.groupId || t2.pinned || !t2.source.trim()) continue;
@@ -1211,7 +1177,7 @@
       }
       buckets.set(venue, bucket);
     }
-    return [...buckets.entries()].filter(([venue, b]) => visibleGroups.has(venue) || !hiddenNames.has(venue) && b.keys.length >= 2).map(([venue, b]) => ({
+    return [...buckets.entries()].filter(([venue, b]) => visibleGroups.has(venue) || b.keys.length >= 2).map(([venue, b]) => ({
       venue,
       keys: b.keys,
       titles: b.titles,
@@ -1221,7 +1187,6 @@
   function applyPublicationGroupSuggestions(store, chosen) {
     for (const suggestion of chosen) {
       const visible = store.visibleGroups().find((group2) => group2.id && group2.name === suggestion.venue);
-      if (!visible && store.hiddenGroups().some((group2) => group2.name === suggestion.venue)) continue;
       const keys = suggestion.keys.filter((key) => !store.groupOfKey(key));
       if (!keys.length) continue;
       const group = visible ?? store.ensureGroup(suggestion.venue);
@@ -1282,7 +1247,7 @@
     const { key, itemID, parentItemID, title, shortTitle, filename, source, creatorYear, collection } = tab;
     return { key, itemID, parentItemID, title, shortTitle, filename, source, creatorYear, collection, type: tab.tab.type };
   }
-  var TabActionService = class {
+  var TabActionService = class _TabActionService {
     win;
     store;
     meta;
@@ -1340,19 +1305,37 @@
       }
       return toClose.length;
     }
-    hideGroup(groupId) {
-      const tabs = this.meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId);
-      const members = tabs.map(toVirtualMember).filter((member) => member !== null);
-      if (groupId) this.store.setGroupHidden(groupId, true, members);
-      else this.store.hideUngrouped(tabs.map((tab) => tab.key), members);
-      const selectedID = this.meta.getSelectedTabID?.();
-      if (selectedID && tabs.some((tab) => tab.tab.id === selectedID)) {
-        const visibleIDs = new Set(this.store.visibleGroups().map((group) => group.id));
-        const fallback = this.meta.buildTrackedTabs().find((tab) => visibleIDs.has(tab.groupId))?.tab.id || this.meta.getNativeTabs?.().find((tab) => tab.type === "library")?.id;
-        if (fallback && fallback !== selectedID) {
-          void Promise.resolve(this.win.Zotero_Tabs?.select?.(fallback)).catch((error) => Zotero.logError(error));
-        }
+    async archiveGroup(groupId, name) {
+      if (this.store.readOnly || groupId && !this.store.state.groups.some((group) => group.id === groupId)) {
+        throw new Error("Workspace cannot be archived");
       }
+      if (this.store.state.sessions.length >= MAX_MANUAL_SESSIONS && findMatchingSessionIndex(this.store.state, name.trim().slice(0, 60), "manual") < 0) {
+        throw new Error("Workspace capacity reached");
+      }
+      const windows = groupId ? [this.win, ...Zotero.getMainWindows?.() ?? []] : [this.win];
+      const targets = [...new Set(windows)].map((win) => {
+        const meta = win === this.win ? this.meta : new ItemMetadataService(win, this.store);
+        const actions = win === this.win ? this : new _TabActionService(win, this.store, meta);
+        return { meta, actions, tabs: meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId) };
+      });
+      const members = Object.values(this.store.state.virtualMembers).filter((member) => this.store.groupOfKey(member.key) === groupId);
+      const prior = this.store.state.sessions.find((session) => session.scopedGroupId === groupId && session.name === name.trim().slice(0, 60));
+      this.store.saveGroupSession(name, groupId, [
+        ...targets.flatMap(({ tabs }) => tabs.map((tab) => tab.key)),
+        ...members.map((member) => member.key),
+        ...prior?.openKeys ?? []
+      ]);
+      for (const { actions, tabs } of targets) {
+        await actions.closeTabs(tabs.map((tab) => tab.tab.id), { preserveVirtual: false, protectMedia: true });
+      }
+      const remaining = targets.reduce((count, { meta }) => count + meta.buildTrackedTabs().filter((tab) => tab.groupId === groupId).length, 0);
+      if (remaining) return remaining;
+      for (const member of members) {
+        if (this.store.state.virtualMembers[member.key] === member) delete this.store.state.virtualMembers[member.key];
+      }
+      if (groupId) this.store.dissolveGroup(groupId);
+      else if (members.length) this.store.save();
+      return 0;
     }
     undoCloseTab() {
       const tabs = this.win.Zotero_Tabs;
@@ -1425,9 +1408,7 @@
           await Zotero.Reader.open(target.id, void 0, { openInBackground });
         }
         if (groupId !== void 0) this.store.assignKey(key, groupId);
-        const currentGroup = this.store.groupOfKey(key);
-        const hidden = this.store.state.groups.some((group) => group.id === currentGroup && group.hidden === true);
-        if (!hidden && virtual && this.store.state.virtualMembers[key] === virtual) this.store.removeVirtualMember(key);
+        if (virtual && this.store.state.virtualMembers[key] === virtual) this.store.removeVirtualMember(key);
         return true;
       } catch (error) {
         Zotero.logError(error);
@@ -1439,12 +1420,11 @@
     }
     autoGroupByCollection(onlyTabIDs) {
       if (this.store.readOnly) return 0;
-      const hiddenNames = new Set(this.store.hiddenGroups().map((group) => group.name));
       const uncategorized = uncategorizedCollectionLabel();
       const byCollection = /* @__PURE__ */ new Map();
       for (const tab of this.meta.buildTrackedTabs(onlyTabIDs)) {
         const name = tab.collection.trim().slice(0, 60);
-        if (!name || tab.groupId || tab.pinned || tab.key.startsWith("tab:") || name === uncategorized || hiddenNames.has(name)) continue;
+        if (!name || tab.groupId || tab.pinned || tab.key.startsWith("tab:") || name === uncategorized) continue;
         if (!byCollection.has(name)) byCollection.set(name, /* @__PURE__ */ new Set());
         byCollection.get(name).add(tab.key);
       }
@@ -2063,8 +2043,7 @@
     const sessionsEnabled = getPref("enableSessions");
     const sessions = sessionsEnabled ? store.state.sessions.length : 0;
     const rolling = sessionsEnabled ? store.state.rollingSessions?.length ?? 0 : 0;
-    const hidden = store.hiddenGroups().length;
-    return { sessions, hidden, rolling, total: sessions + hidden };
+    return { sessions, rolling, total: sessions };
   }
   var WorkspaceHubController = class {
     win;
@@ -2112,7 +2091,7 @@
       const header = this.h("div", "ztf-hub-head");
       const title = this.h("div", "ztf-hub-title");
       title.id = "ztf-hub-title";
-      title.textContent = t("zotero-tabflow-hub-title", "TabFlow 工作区（会话与隐藏项目）");
+      title.textContent = t("zotero-tabflow-hub-title", "TabFlow 工作区");
       const closeBtn = this.btn("✕", "ztf-hub-close", () => this.dispose());
       closeBtn.setAttribute("aria-label", t("zotero-tabflow-toolbar-close-workspace", "关闭工作区"));
       header.append(title, closeBtn);
@@ -2153,19 +2132,15 @@
       if (!this.bodyEl) return;
       if (this.statusEl && this.store.readOnly) this.statusEl.textContent = t("zotero-tabflow-hub-readonly-warning", "工作区数据处于只读保护状态，暂不可保存或修改。");
       const sessionsEnabled = getPref("enableSessions");
-      const hiddenGroups = this.store.hiddenGroups();
       const sessions = this.store.state.sessions;
       const rolling = this.store.state.rollingSessions ?? [];
       const parts = [];
       if (sessionsEnabled) {
         parts.push(this.buildQuickSaveBar(sessions.length));
       }
-      if (hiddenGroups.length || getPref("enableGroupHiding")) {
-        parts.push(this.buildHiddenSection(hiddenGroups));
-      }
       if (sessionsEnabled) {
         parts.push(this.buildSessionsSection(sessions));
-        if (rolling.length) parts.push(this.buildRollingSection(rolling));
+        if (sessionsEnabled && rolling.length) parts.push(this.buildRollingSection(rolling));
       }
       this.bodyEl.replaceChildren(...parts);
     }
@@ -2209,93 +2184,6 @@
       row.append(label);
       if (extraBtn) row.append(extraBtn);
       return row;
-    }
-    buildHiddenSection(hiddenGroups) {
-      const sec = this.h("div", "ztf-hub-section");
-      sec.id = "ztf-hub-hidden-section";
-      const ro = this.store.readOnly;
-      const showAll = hiddenGroups.length > 1 ? this.btn(t("zotero-tabflow-hub-show-all-hidden", "全部恢复显示"), "ztf-hub-btn", () => {
-        for (const g of hiddenGroups) this.store.setGroupHidden(g.id, false);
-        this.refreshHiddenFocus(0);
-      }, ro) : void 0;
-      const heading = this.buildSectionHeader(t("zotero-tabflow-hub-hidden-header", `已隐藏的项目组 (${hiddenGroups.length})`, { count: hiddenGroups.length }), showAll);
-      heading.tabIndex = -1;
-      sec.append(heading);
-      if (!hiddenGroups.length) {
-        const empty = this.h("div", "ztf-hub-empty");
-        empty.textContent = t("zotero-tabflow-hub-hidden-empty", "暂无隐藏分组；在标签分组标题右键「隐藏分组」可暂存于此。");
-        sec.append(empty);
-        return sec;
-      }
-      const openKeys = new Set(this.meta.buildTrackedTabs().map((tab) => tab.key));
-      for (const [index, g] of hiddenGroups.entries()) {
-        const virtuals = Object.values(this.store.state.virtualMembers).filter((m) => this.store.groupOfKey(m.key) === g.id);
-        const unopened = virtuals.filter((member) => !openKeys.has(member.key));
-        const card = this.h("div", "ztf-hub-card");
-        const info = this.h("div", "ztf-hub-card-info");
-        const titleRow = this.h("div", "ztf-hub-card-title");
-        const dot = this.h("span", "ztf-sb-dot");
-        dot.style.background = g.color;
-        const name = this.h("span");
-        name.textContent = g.name;
-        titleRow.append(dot, name);
-        const meta = this.h("div", "ztf-hub-card-meta");
-        meta.textContent = t("zotero-tabflow-hub-hidden-meta", `保留 ${virtuals.length} 篇文献成员`, { count: virtuals.length });
-        info.append(titleRow, meta);
-        const btns = this.h("div", "ztf-hub-card-actions");
-        btns.append(
-          this.btn(t("zotero-tabflow-hub-unhide", "恢复显示"), "ztf-hub-btn primary ztf-hub-restore", () => {
-            this.store.setGroupHidden(g.id, false);
-            this.refreshHiddenFocus(index);
-          }, ro)
-        );
-        if (unopened.length) {
-          btns.append(this.btn(t("zotero-tabflow-hub-restore-reopen", `恢复并补开 ${unopened.length} 篇`, { count: unopened.length }), "ztf-hub-btn", () => {
-            const status = this.statusEl;
-            this.store.setGroupHidden(g.id, false);
-            this.refreshHiddenFocus(index);
-            void (async () => {
-              let opened = 0;
-              let failed = 0;
-              const currentKeys = new Set(this.meta.buildTrackedTabs().map((tab) => tab.key));
-              for (const m of unopened) {
-                if (currentKeys.has(m.key)) continue;
-                if (await this.actions.openVirtualOrItem(m.itemID, void 0, true, m.key)) opened++;
-                else failed++;
-              }
-              if (status && this.statusEl === status) {
-                status.textContent = t("zotero-tabflow-hub-reopen-result", `已补开 ${opened} 篇，未能打开 ${failed} 篇`, { opened, failed });
-              }
-              this.callbacks.onRefresh();
-            })();
-          }, ro));
-        }
-        btns.append(this.btn(t("zotero-tabflow-hub-dissolve", "解散"), "ztf-hub-btn danger", () => {
-          if (!Services.prompt.confirm(this.win, t("zotero-tabflow-dissolve-group", "解散分组"), t("zotero-tabflow-dissolve-group-confirm", `解散“${g.name}”？标签页将保留并回到未分组。`, { name: g.name }))) return;
-          const warn = () => Services.prompt.alert(this.win, t("zotero-tabflow-dissolve-group", "解散分组"), t("zotero-tabflow-dissolve-group-failed", "无法解散分组：数据为只读，或分组已不存在。"));
-          try {
-            if (!this.store.dissolveGroup(g.id)) {
-              warn();
-              return;
-            }
-            this.refreshHiddenFocus(index);
-            this.callbacks.onRefresh();
-          } catch (error) {
-            Zotero.logError(error);
-            warn();
-          }
-        }, ro));
-        card.append(info, btns);
-        sec.append(card);
-      }
-      return sec;
-    }
-    refreshHiddenFocus(index) {
-      this.renderContent();
-      const section = this.bodyEl?.querySelector?.("#ztf-hub-hidden-section");
-      if (!section) return;
-      const buttons = section.querySelectorAll(".ztf-hub-restore");
-      (buttons[Math.min(index, buttons.length - 1)] ?? section.querySelector(".ztf-hub-sec-head"))?.focus();
     }
     buildSessionsSection(sessions) {
       const sec = this.h("div", "ztf-hub-section");
@@ -2358,7 +2246,7 @@
               this.store.save();
               this.renderContent();
             }
-          }, ro),
+          }, ro || s.scopedGroupId !== void 0 && !this.store.state.groups.some((group) => group.id === s.scopedGroupId)),
           this.btn(t("zotero-tabflow-hub-rename", "重命名"), "ztf-hub-btn", () => {
             const val = { value: s.name };
             if (!Services.prompt.prompt(this.win, t("zotero-tabflow-hub-rename", "重命名"), t("zotero-tabflow-hub-rename-prompt", "请输入新的会话名称："), val, null, {})) return;
@@ -2717,14 +2605,14 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         });
       }
       const hubCounts = computeWorkspaceHubCounts(this.store);
-      if (getPref("enableSessions") || getPref("enableGroupHiding")) {
+      if (getPref("enableSessions")) {
         actions.push({
           id: "workspace",
           icon: "workspace",
           popup: "dialog",
-          count: hubCounts.hidden,
+          count: hubCounts.total,
           label: t("zotero-tabflow-workspace-btn", "工作区"),
-          title: t("zotero-tabflow-toolbar-workspace-tip", `隐藏项目 ${hubCounts.hidden}`, { count: hubCounts.hidden }),
+          title: t("zotero-tabflow-toolbar-workspace-tip", `已保存的工作区 ${hubCounts.total}`, { count: hubCounts.total }),
           run: (button) => this.popovers.openWorkspaceHub(button)
         });
       }
@@ -3281,7 +3169,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       });
     }
     openWorkspaceHub(anchor) {
-      if (!getPref("enableSessions") && !getPref("enableGroupHiding")) return;
+      if (!getPref("enableSessions")) return;
       this.hub.open(anchor);
     }
     openHiddenGroupsMenu(_anchor) {
@@ -3690,15 +3578,13 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       const tabs = this.meta.buildTrackedTabs();
       const groups = this.store.orderedGroups();
       const names = new Map(groups.map((group) => [group.id, group.name]));
-      const hiddenGroups = this.store.hiddenGroups();
-      const hiddenIds = new Set(hiddenGroups.map((group) => group.id));
       const matches = (value) => terms.every((term) => value.toLowerCase().includes(term));
       const tabMatches = (tab) => matches(`${this.store.getRemark(tab.key).note} ${tab.title} ${tab.shortTitle} ${tab.filename} ${tab.collection} ${tab.creatorYear} ${names.get(tab.groupId) ?? ""}`);
       if (tabsMode) {
         const viewedAt = (key) => this.store.state.history[key]?.lastViewed ?? 0;
         tabs.sort((a, b) => viewedAt(b.key) - viewedAt(a.key));
       }
-      const tabEntries = q.startsWith(">") && !tabsMode || libMode ? [] : tabs.filter((tab) => !hiddenIds.has(tab.groupId) && tabMatches(tab)).map((tab) => {
+      const tabEntries = q.startsWith(">") && !tabsMode || libMode ? [] : tabs.filter((tab) => tabMatches(tab)).map((tab) => {
         const gName = names.get(tab.groupId) || t("zotero-tabflow-ungrouped", "未分组");
         const r = getPref("enableTabRemarks") ? this.store.getRemark(tab.key).note : "";
         return { label: `${tab.pinned ? "📌 " : ""}${r || tab.title}`, hint: `${gName} · ${tab.collection}`, run: () => this.actions.selectTab(tab.tab.id) };
@@ -3706,7 +3592,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       const openKeys = new Set(tabs.map((tab) => tab.key));
       const visibleVirtuals = q.startsWith(">") && !tabsMode || libMode || tabsMode || !getPref("enableVirtualMembers") ? [] : Object.values(this.store.state.virtualMembers).flatMap((m) => {
         const gid = this.store.groupOfKey(m.key);
-        if (openKeys.has(m.key) || hiddenIds.has(gid) || !matches(`${this.store.getRemark(m.key).note} ${m.title} ${m.shortTitle} ${m.filename} ${m.collection} ${m.creatorYear} ${names.get(gid) ?? ""}`)) return [];
+        if (openKeys.has(m.key) || !matches(`${this.store.getRemark(m.key).note} ${m.title} ${m.shortTitle} ${m.filename} ${m.collection} ${m.creatorYear} ${names.get(gid) ?? ""}`)) return [];
         const r = getPref("enableTabRemarks") ? this.store.getRemark(m.key).note : "";
         return [{ label: `◌ ${r || m.title}`, hint: `${names.get(gid) || t("zotero-tabflow-ungrouped", "未分组")} · ${t("zotero-tabflow-spot-virtual-hint", "虚拟保留")}`, run: () => void this.actions.openVirtualOrItem(m.itemID, gid, false, m.key).then((ok) => {
           if (!ok) Services.prompt.alert(this.win, m.title, t("zotero-tabflow-spot-hidden-open-failed", "未能打开这篇文献。请检查附件文件是否可用。"));
@@ -3738,42 +3624,9 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         hint: t("zotero-tabflow-spot-session-hint", "预览并恢复"),
         run: () => this.win.setTimeout(() => void this.popovers.previewAndRestoreSession(s), 0)
       })).filter((e) => !terms.length || terms.every((term) => `${e.label} ${e.hint}`.toLowerCase().includes(term)));
-      const hiddenDocuments = libMode || q.startsWith(">") && !tabsMode ? [] : [
-        ...tabs.filter((tab) => hiddenIds.has(tab.groupId) && tabMatches(tab)).map((tab) => ({
-          groupId: tab.groupId,
-          label: this.store.getRemark(tab.key).note || tab.title,
-          hint: `${names.get(tab.groupId)} · ${t("zotero-tabflow-spot-hidden-select", "仅切换至此标签")}`,
-          run: () => this.actions.selectTab(tab.tab.id)
-        })),
-        ...!tabsMode && getPref("enableVirtualMembers") ? Object.values(this.store.state.virtualMembers).flatMap((member) => {
-          const groupId = this.store.groupOfKey(member.key);
-          if (openKeys.has(member.key) || !hiddenIds.has(groupId) || !matches(`${this.store.getRemark(member.key).note} ${member.title} ${member.shortTitle} ${member.filename} ${member.collection} ${names.get(groupId)}`)) return [];
-          return [{
-            groupId,
-            label: (getPref("enableTabRemarks") ? this.store.getRemark(member.key).note : "") || member.title,
-            hint: `${names.get(groupId)} · ${t("zotero-tabflow-spot-hidden-open", "仅打开这篇文献")}`,
-            run: () => {
-              void this.actions.openVirtualOrItem(member.itemID, void 0, false, member.key).then((opened) => {
-                if (!opened) Services.prompt.alert(this.win, member.title, t("zotero-tabflow-spot-hidden-open-failed", "未能打开这篇文献。请检查附件文件是否可用。"));
-                this.onRefresh();
-              });
-            }
-          }];
-        }) : []
-      ];
-      const matchedHiddenIds = new Set(hiddenDocuments.map((entry) => entry.groupId));
-      const restoreHint = t("zotero-tabflow-spot-hidden-hint", "恢复分组");
-      const hiddenEntries = libMode ? [] : hiddenGroups.filter((g) => matchedHiddenIds.has(g.id) || !tabsMode && matches(`${g.name} ${restoreHint}`)).map((g) => ({
-        label: g.name,
-        hint: restoreHint,
-        run: () => {
-          this.store.setGroupHidden(g.id, false);
-          this.onRefresh();
-        }
-      }));
       const cmdEntries = libMode ? [] : [
-        ...getPref("enableSessions") || getPref("enableGroupHiding") ? [{
-          label: `🗂️ ${t("zotero-tabflow-spot-cmd-workspace", "打开 TabFlow 工作区（会话与隐藏项目）…")}`,
+        ...getPref("enableSessions") ? [{
+          label: `🗂️ ${t("zotero-tabflow-spot-cmd-workspace", "打开 TabFlow 工作区…")}`,
           hint: t("zotero-tabflow-spot-hint-workspace", "工作区"),
           run: () => this.win.setTimeout(() => this.popovers.openWorkspaceHub(), 0)
         }] : [],
@@ -3844,7 +3697,6 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       const sections = helpMode ? [[t("zotero-tabflow-spot-help-hint", "搜索语法提示"), helpEntries]] : [
         [t("zotero-tabflow-spot-section-tabs", "打开的标签"), allTabEntries],
         [t("zotero-tabflow-spot-section-library", "文库文献"), libraryEntries],
-        [t("zotero-tabflow-spot-section-hidden", "隐藏项目"), [...hiddenDocuments, ...hiddenEntries]],
         [t("zotero-tabflow-spot-section-sessions", "会话与快照"), tabsMode ? [] : sessionEntries],
         [t("zotero-tabflow-spot-section-actions", "操作"), tabsMode ? [] : cmdEntries]
       ];
@@ -4055,9 +3907,6 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         if (!group.id) {
           const ungroupedTabs = this.meta.buildTrackedTabs().filter((tab) => !tab.groupId);
           const ungrouped = ungroupedTabs.filter((tab) => !tab.pinned);
-          if (getPref("enableGroupHiding") && (ungroupedTabs.length || virtualMembers.length)) {
-            this.item(popup, t("zotero-tabflow-hide-ungrouped", "隐藏当前未分组文献"), () => this.actions.hideGroup(""));
-          }
           this.item(popup, t("zotero-tabflow-menu-convert-ungrouped", `将未分组文献转为新分组… (${ungrouped.length})`, { count: ungrouped.length }), () => {
             this.defer(() => {
               const val = { value: "" };
@@ -4068,10 +3917,6 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
               }
             });
           }, { disabled: !ungrouped.length });
-        } else {
-          if (getPref("enableGroupHiding")) {
-            this.item(popup, t("zotero-tabflow-hide-group", "隐藏分组"), () => this.actions.hideGroup(group.id));
-          }
         }
         this.item(popup, t("zotero-tabflow-dissolve-group", "解散此分组"), () => this.defer(() => this.confirmDissolve(group)));
         const colorMenu = this.xul("menu");
@@ -4096,30 +3941,21 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         });
         popup.append(this.xul("menuseparator"));
         if (getPref("enableSessions") && !this.store.readOnly) {
-          const promptSave = (defaultName, scopeGroup) => {
-            const idx = findMatchingSessionIndex(this.store.state, defaultName, "manual");
-            const label = idx >= 0 ? t("zotero-tabflow-sessions-overwrite-prompt", "已存在同名工作区，确认将覆盖更新为当前最新状态（也可改名另存）：") : t("zotero-tabflow-sessions-save-prompt", "请输入会话名称：");
-            const val = { value: defaultName };
-            if (!Services.prompt.prompt(this.win, t("zotero-tabflow-hub-save-session", "保存工作区"), label, val, null, {})) return;
-            const keys = this.meta.buildTrackedTabs().map((tab) => tab.key);
-            if (scopeGroup) this.store.saveGroupSession(val.value, group.id, keys);
-            else this.store.saveSession(val.value, keys);
-            this.onRefresh();
-          };
-          this.item(popup, `💾 ${t("zotero-tabflow-menu-save-to-workspace", "保存到工作区…")}`, () => {
-            this.defer(() => {
-              const baseName = group.id || this.store.state.ungroupedName ? group.name : t("zotero-tabflow-session-default-name", "工作区会话");
-              promptSave(baseName, false);
+          this.item(popup, t("zotero-tabflow-menu-archive-group", "保存到工作区并关闭…"), () => this.defer(() => {
+            const title = t("zotero-tabflow-menu-archive-group", "保存到工作区并关闭…");
+            const name = { value: group.name };
+            const message = t("zotero-tabflow-archive-name", "保存本组文献并关闭对应标签。请输入工作区名称。");
+            if (!Services.prompt.prompt(this.win, title, message, name, null, {}) || !name.value.trim()) return;
+            const idx = findMatchingSessionIndex(this.store.state, name.value.trim().slice(0, 60), "manual");
+            if (idx >= 0 && !Services.prompt.confirm(this.win, title, t("zotero-tabflow-archive-overwrite", "同名工作区已存在。要覆盖它吗？"))) return;
+            void this.actions.archiveGroup(group.id, name.value).then((remaining) => {
+              this.onRefresh();
+              if (remaining) Services.prompt.alert(this.win, title, t("zotero-tabflow-archive-remaining", "工作区已保存。仍有 { $count } 个标签未关闭，分组已保留。", { count: remaining }));
+            }).catch((error) => {
+              Zotero.logError(error);
+              Services.prompt.alert(this.win, title, t("zotero-tabflow-archive-failed", "无法保存并关闭工作区。"));
             });
-          });
-          this.item(popup, `📦 ${t("zotero-tabflow-menu-save-group-workspace", "仅保存本组到工作区…")}`, () => {
-            this.defer(() => {
-              const baseName = group.name || t("zotero-tabflow-session-default-name", "工作区会话");
-              const idx = findMatchingSessionIndex(this.store.state, baseName, "manual");
-              const suggested = idx >= 0 && this.store.state.sessions[idx]?.scopedGroupId === void 0 ? `${baseName}（${t("zotero-tabflow-menu-group-tag", "仅本组")}）` : baseName;
-              promptSave(suggested, true);
-            });
-          });
+          }));
         }
         this.item(popup, t("zotero-tabflow-menu-collapse-others", "折叠其他分组"), () => {
           this.store.collapseOtherGroups(group.id);
@@ -5565,10 +5401,9 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       this.lastSelected = this.tracker.trackActivity(this.lastSelected, tracked);
       const retained = this.store.state.virtualMembers;
       if (Object.keys(retained).length) {
-        const hiddenIds = new Set(this.store.state.groups.filter((group) => group.hidden === true).map((group) => group.id));
         let changed = false;
         for (const tab of tracked) {
-          if (!hiddenIds.has(tab.groupId) && Object.hasOwn(retained, tab.key)) {
+          if (Object.hasOwn(retained, tab.key)) {
             delete retained[tab.key];
             changed = true;
           }

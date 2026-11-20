@@ -1,6 +1,5 @@
 pref("extensions.zotero.tabflow.enableHorizontalGroups", true);
 pref("extensions.zotero.tabflow.horizontalTabCompactMode", "auto");
-pref("extensions.zotero.tabflow.enableGroupHiding", true);
 pref("extensions.zotero.tabflow.compactTopBar", false);
 pref("extensions.zotero.tabflow.enableVerticalSidebar", true);
 pref("extensions.zotero.tabflow.enableBatchSelection", true);

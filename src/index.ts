@@ -178,10 +178,9 @@ class WindowWorkspace {
 		this.lastSelected = this.tracker.trackActivity(this.lastSelected, tracked);
 		const retained = this.store.state.virtualMembers;
 		if (Object.keys(retained).length) {
-			const hiddenIds = new Set(this.store.state.groups.filter((group) => group.hidden === true).map((group) => group.id));
 			let changed = false;
 			for (const tab of tracked) {
-				if (!hiddenIds.has(tab.groupId) && Object.hasOwn(retained, tab.key)) {
+				if (Object.hasOwn(retained, tab.key)) {
 					delete retained[tab.key];
 					changed = true;
 				}
