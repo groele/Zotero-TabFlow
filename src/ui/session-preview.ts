@@ -7,6 +7,7 @@ export class SessionPreviewController {
 	private readonly win: Window;
 	private readonly doc: Document;
 	private overlay: HTMLDivElement | null = null;
+	private restoreProgress: HTMLDivElement | null = null;
 
 	constructor(win: Window, doc: Document) {
 		this.win = win;
@@ -19,7 +20,7 @@ export class SessionPreviewController {
 		return el;
 	}
 
-	private createPanel(buildBody: (box: HTMLDivElement, close: () => void) => void): void {
+	private createPanel(buildBody: (box: HTMLDivElement, close: () => void) => void, onClose?: () => void): void {
 		this.dispose();
 		const host = this.doc.body || this.doc.documentElement;
 		if (!host) return;
@@ -29,7 +30,7 @@ export class SessionPreviewController {
 		backdrop.setAttribute('aria-modal', 'true');
 
 		const box = this.h('div', 'ztf-preview-box');
-		const close = () => this.dispose();
+		const close = () => { onClose?.(); this.dispose(); };
 		buildBody(box, close);
 		backdrop.addEventListener('click', (e: MouseEvent) => {
 			if (e.target === backdrop) close();
@@ -117,6 +118,40 @@ export class SessionPreviewController {
 		});
 	}
 
+	openRestoreProgress(sessionName: string, onCancel: () => void): void {
+		this.createPanel((box, close) => {
+			const title = this.h('div', 'ztf-pv-title');
+			title.textContent = t('zotero-tabflow-restore-progress-title', `正在准备恢复：${sessionName}`, { name: sessionName });
+			const status = this.h('div', 'ztf-pv-note');
+			status.setAttribute('role', 'status');
+			status.setAttribute('aria-live', 'polite');
+			status.textContent = t('zotero-tabflow-restore-progress', '正在检查会话中的文献…');
+			const progress = this.h('progress');
+			progress.max = 1;
+			progress.value = 0;
+			progress.style.width = '100%';
+			const footer = this.h('div', 'ztf-pv-footer');
+			const cancel = this.h('button', 'ztf-pv-btn');
+			cancel.type = 'button';
+			cancel.textContent = t('zotero-tabflow-cancel', '取消');
+			cancel.onclick = close;
+			footer.append(cancel);
+			box.append(title, status, progress, footer);
+			this.restoreProgress = status;
+			cancel.focus?.();
+		}, onCancel);
+	}
+
+	updateRestoreProgress(completed: number, total: number): void {
+		if (!this.restoreProgress) return;
+		this.restoreProgress.textContent = t('zotero-tabflow-restore-progress-count', `正在检查文献：${completed} / ${total}`, { completed, total });
+		const progress = this.overlay?.querySelector('progress');
+		if (progress) {
+			(progress as HTMLProgressElement).max = Math.max(1, total);
+			(progress as HTMLProgressElement).value = completed;
+		}
+	}
+
 	openImportPreview(preview: SessionImportPreview, onConfirm: () => void): void {
 		this.createPanel((box, close) => {
 			const title = this.h('div', 'ztf-pv-title');
@@ -199,5 +234,6 @@ export class SessionPreviewController {
 	dispose(): void {
 		this.overlay?.remove?.();
 		this.overlay = null;
+		this.restoreProgress = null;
 	}
 }

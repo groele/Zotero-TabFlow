@@ -1047,6 +1047,20 @@
   }
 
   // src/services/session-restore.ts
+  var SESSION_LOOKUP_CONCURRENCY = 6;
+  async function mapWithConcurrency(items, limit, map) {
+    const results = new Array(items.length);
+    let nextIndex = 0;
+    const worker = async () => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= items.length) return;
+        results[index] = await map(items[index]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+    return results;
+  }
   var defaultResolver = async (libraryID, itemKey) => {
     try {
       const item = await Zotero.Items.getByLibraryAndKeyAsync(libraryID, itemKey);
@@ -1065,28 +1079,34 @@
   function sessionVirtualMembers(session) {
     return session.kind !== "template" && Array.isArray(session.virtualMembers) ? session.virtualMembers.filter((member) => member && typeof member.key === "string" && typeof member.title === "string") : [];
   }
-  async function buildSessionRestorePlan(store, openKeysNow, session, merge, resolver = defaultResolver) {
+  async function buildSessionRestorePlan(store, openKeysNow, session, merge, resolver = defaultResolver, onProgress, signal) {
     const openSet = new Set(openKeysNow);
     let alreadyOpenCount = 0;
     const toOpen = [];
     const missing = [];
     const virtualMembers = Array.isArray(session.virtualMembers) || session.kind === "template" ? [] : void 0;
     const resolved = /* @__PURE__ */ new Map();
-    const resolve = async (fullKey, ref) => {
-      if (!resolved.has(fullKey)) resolved.set(fullKey, await resolver(ref.libraryID, ref.itemKey));
-      return resolved.get(fullKey);
-    };
-    for (const fullKey of new Set(session.openKeys)) {
-      if (openSet.has(fullKey)) {
-        alreadyOpenCount++;
-        continue;
-      }
+    const openEntries = [...new Set(session.openKeys)];
+    alreadyOpenCount = openEntries.filter((key) => openSet.has(key)).length;
+    const members = sessionVirtualMembers(session);
+    const total = openEntries.filter((key) => !openSet.has(key)).length + [...new Set(members.map((member) => member.key))].filter((key) => !openEntries.includes(key)).length;
+    let completed = 0;
+    onProgress?.(completed, total);
+    const lookupEntries = openEntries.filter((key) => !openSet.has(key));
+    const resolvedOpen = await mapWithConcurrency(lookupEntries, SESSION_LOOKUP_CONCURRENCY, async (fullKey) => {
+      if (signal?.aborted) throw new DOMException("Session restore planning canceled", "AbortError");
       const parsed = parseItemFullKey(fullKey);
+      const item = parsed ? await resolver(parsed.libraryID, parsed.itemKey) : null;
+      resolved.set(fullKey, item);
+      completed++;
+      onProgress?.(completed, total);
+      return { fullKey, parsed, item };
+    });
+    for (const { fullKey, parsed, item } of resolvedOpen) {
       if (!parsed) {
         missing.push({ fullKey, libraryID: 0, itemKey: fullKey });
         continue;
       }
-      const item = await resolve(fullKey, parsed);
       if (item && !item.deleted) {
         toOpen.push({ fullKey, ...parsed, itemID: item.id, title: item.getField?.("title") || fullKey });
       } else {
@@ -1095,12 +1115,26 @@
     }
     const missingKeys = new Set(missing.map((ref) => ref.fullKey));
     const seenVirtualKeys = /* @__PURE__ */ new Set();
-    for (const member of sessionVirtualMembers(session)) {
+    const memberKeys = /* @__PURE__ */ new Set();
+    const uniqueMembers = members.filter((member) => {
+      if (memberKeys.has(member.key)) return false;
+      memberKeys.add(member.key);
+      return true;
+    });
+    const resolvedMembers = await mapWithConcurrency(uniqueMembers, SESSION_LOOKUP_CONCURRENCY, async (member) => {
+      if (signal?.aborted) throw new DOMException("Session restore planning canceled", "AbortError");
+      if (resolved.has(member.key)) return { member, ref: parseItemFullKey(member.key), item: resolved.get(member.key) };
+      const ref = parseItemFullKey(member.key);
+      const item = ref ? await resolver(ref.libraryID, ref.itemKey) : null;
+      resolved.set(member.key, item);
+      completed++;
+      onProgress?.(completed, total);
+      return { member, ref, item };
+    });
+    for (const { member, ref, item } of resolvedMembers) {
       const fullKey = member.key;
       if (seenVirtualKeys.has(fullKey)) continue;
       seenVirtualKeys.add(fullKey);
-      const ref = parseItemFullKey(fullKey);
-      const item = ref ? await resolve(fullKey, ref) : null;
       if (item && !item.deleted) {
         virtualMembers?.push({ ...member, itemID: item.id, parentItemID: item.parentItemID || null });
       } else if (!missingKeys.has(fullKey)) {
@@ -2870,6 +2904,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     win;
     doc;
     overlay = null;
+    restoreProgress = null;
     constructor(win, doc) {
       this.win = win;
       this.doc = doc;
@@ -2879,7 +2914,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       if (className) el.className = className;
       return el;
     }
-    createPanel(buildBody) {
+    createPanel(buildBody, onClose) {
       this.dispose();
       const host = this.doc.body || this.doc.documentElement;
       if (!host) return;
@@ -2888,7 +2923,10 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
       backdrop.setAttribute("role", "dialog");
       backdrop.setAttribute("aria-modal", "true");
       const box = this.h("div", "ztf-preview-box");
-      const close = () => this.dispose();
+      const close = () => {
+        onClose?.();
+        this.dispose();
+      };
       buildBody(box, close);
       backdrop.addEventListener("click", (e) => {
         if (e.target === backdrop) close();
@@ -2973,6 +3011,38 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         box.append(title, modeRow, stats, note, missingList, footer);
         okBtn.focus?.();
       });
+    }
+    openRestoreProgress(sessionName, onCancel) {
+      this.createPanel((box, close) => {
+        const title = this.h("div", "ztf-pv-title");
+        title.textContent = t("zotero-tabflow-restore-progress-title", `正在准备恢复：${sessionName}`, { name: sessionName });
+        const status = this.h("div", "ztf-pv-note");
+        status.setAttribute("role", "status");
+        status.setAttribute("aria-live", "polite");
+        status.textContent = t("zotero-tabflow-restore-progress", "正在检查会话中的文献…");
+        const progress = this.h("progress");
+        progress.max = 1;
+        progress.value = 0;
+        progress.style.width = "100%";
+        const footer = this.h("div", "ztf-pv-footer");
+        const cancel = this.h("button", "ztf-pv-btn");
+        cancel.type = "button";
+        cancel.textContent = t("zotero-tabflow-cancel", "取消");
+        cancel.onclick = close;
+        footer.append(cancel);
+        box.append(title, status, progress, footer);
+        this.restoreProgress = status;
+        cancel.focus?.();
+      }, onCancel);
+    }
+    updateRestoreProgress(completed, total) {
+      if (!this.restoreProgress) return;
+      this.restoreProgress.textContent = t("zotero-tabflow-restore-progress-count", `正在检查文献：${completed} / ${total}`, { completed, total });
+      const progress = this.overlay?.querySelector("progress");
+      if (progress) {
+        progress.max = Math.max(1, total);
+        progress.value = completed;
+      }
     }
     openImportPreview(preview, onConfirm) {
       this.createPanel((box, close) => {
@@ -3059,6 +3129,7 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     dispose() {
       this.overlay?.remove?.();
       this.overlay = null;
+      this.restoreProgress = null;
     }
   };
 
@@ -3180,15 +3251,36 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
     }
     async previewAndRestoreSession(session) {
       if (this.disposed || this.restoring) return;
+      const controller = new AbortController();
+      const progressByPlan = [{ completed: 0, total: 0 }, { completed: 0, total: 0 }];
+      const resolved = /* @__PURE__ */ new Map();
+      const resolver = (libraryID, itemKey) => {
+        const key = `${libraryID}:${itemKey}`;
+        let pending = resolved.get(key);
+        if (!pending) {
+          pending = Zotero.Items.getByLibraryAndKeyAsync(libraryID, itemKey).then((item) => item || null).catch(() => null);
+          resolved.set(key, pending);
+        }
+        return pending ?? Promise.resolve(null);
+      };
+      this.preview.openRestoreProgress(session.name, () => controller.abort());
       try {
         const openKeys = this.meta.buildTrackedTabs().map((item) => item.key);
         const [mergePlan, replacePlan] = await Promise.all([
-          buildSessionRestorePlan(this.store, openKeys, session, true),
-          buildSessionRestorePlan(this.store, openKeys, session, false)
+          buildSessionRestorePlan(this.store, openKeys, session, true, resolver, (completed, total) => {
+            progressByPlan[0] = { completed, total };
+            this.preview.updateRestoreProgress(progressByPlan.reduce((n, p) => n + p.completed, 0), progressByPlan.reduce((n, p) => n + p.total, 0));
+          }, controller.signal),
+          buildSessionRestorePlan(this.store, openKeys, session, false, resolver, (completed, total) => {
+            progressByPlan[1] = { completed, total };
+            this.preview.updateRestoreProgress(progressByPlan.reduce((n, p) => n + p.completed, 0), progressByPlan.reduce((n, p) => n + p.total, 0));
+          }, controller.signal)
         ]);
-        if (this.disposed) return;
+        if (this.disposed || controller.signal.aborted) return;
         this.preview.openRestorePreview(mergePlan, replacePlan, (chosen) => this.executePlan(chosen));
       } catch (error) {
+        if (controller.signal.aborted || error?.name === "AbortError") return;
+        this.preview.dispose();
         Zotero.logError(error);
         Services.prompt.alert(this.win, "Zotero TabFlow", t("zotero-tabflow-session-restore-error", "加载会话预览失败，请查看 Zotero 错误控制台。"));
       }

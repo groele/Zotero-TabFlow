@@ -40,6 +40,22 @@ export interface PublicationGroupSuggestion {
 
 export type ItemKeyResolver = (libraryID: number, itemKey: string) => Promise<{ id: number; parentItemID?: number | false | null; deleted?: boolean; getField?: (f: string) => string } | null>;
 
+const SESSION_LOOKUP_CONCURRENCY = 6;
+
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let nextIndex = 0;
+	const worker = async () => {
+		while (true) {
+			const index = nextIndex++;
+			if (index >= items.length) return;
+			results[index] = await map(items[index]);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return results;
+}
+
 const defaultResolver: ItemKeyResolver = async (libraryID, itemKey) => {
 	try {
 		const item = await Zotero.Items.getByLibraryAndKeyAsync(libraryID, itemKey);
@@ -69,6 +85,8 @@ export async function buildSessionRestorePlan(
 	session: TabSessionSnapshot,
 	merge: boolean,
 	resolver: ItemKeyResolver = defaultResolver,
+	onProgress?: (completed: number, total: number) => void,
+	signal?: AbortSignal,
 ): Promise<SessionRestorePlan> {
 	const openSet = new Set(openKeysNow);
 	let alreadyOpenCount = 0;
@@ -77,22 +95,28 @@ export async function buildSessionRestorePlan(
 	const virtualMembers: VirtualMemberMeta[] | undefined =
 		Array.isArray(session.virtualMembers) || session.kind === 'template' ? [] : undefined;
 	const resolved = new Map<string, Awaited<ReturnType<ItemKeyResolver>>>();
-	const resolve = async (fullKey: string, ref: { libraryID: number; itemKey: string }) => {
-		if (!resolved.has(fullKey)) resolved.set(fullKey, await resolver(ref.libraryID, ref.itemKey));
-		return resolved.get(fullKey);
-	};
-
-	for (const fullKey of new Set(session.openKeys)) {
-		if (openSet.has(fullKey)) {
-			alreadyOpenCount++;
-			continue;
-		}
+	const openEntries = [...new Set(session.openKeys)];
+	alreadyOpenCount = openEntries.filter((key) => openSet.has(key)).length;
+	const members = sessionVirtualMembers(session);
+	const total = openEntries.filter((key) => !openSet.has(key)).length
+		+ [...new Set(members.map((member) => member.key))].filter((key) => !openEntries.includes(key)).length;
+	let completed = 0;
+	onProgress?.(completed, total);
+	const lookupEntries = openEntries.filter((key) => !openSet.has(key));
+	const resolvedOpen = await mapWithConcurrency(lookupEntries, SESSION_LOOKUP_CONCURRENCY, async (fullKey) => {
+		if (signal?.aborted) throw new DOMException('Session restore planning canceled', 'AbortError');
 		const parsed = parseItemFullKey(fullKey);
+		const item = parsed ? await resolver(parsed.libraryID, parsed.itemKey) : null;
+		resolved.set(fullKey, item);
+		completed++;
+		onProgress?.(completed, total);
+		return { fullKey, parsed, item };
+	});
+	for (const { fullKey, parsed, item } of resolvedOpen) {
 		if (!parsed) {
 			missing.push({ fullKey, libraryID: 0, itemKey: fullKey });
 			continue;
 		}
-		const item = await resolve(fullKey, parsed);
 		if (item && !item.deleted) {
 			toOpen.push({ fullKey, ...parsed, itemID: item.id, title: item.getField?.('title') || fullKey });
 		} else {
@@ -101,12 +125,26 @@ export async function buildSessionRestorePlan(
 	}
 	const missingKeys = new Set(missing.map((ref) => ref.fullKey));
 	const seenVirtualKeys = new Set<string>();
-	for (const member of sessionVirtualMembers(session)) {
+	const memberKeys = new Set<string>();
+	const uniqueMembers = members.filter((member) => {
+		if (memberKeys.has(member.key)) return false;
+		memberKeys.add(member.key);
+		return true;
+	});
+	const resolvedMembers = await mapWithConcurrency(uniqueMembers, SESSION_LOOKUP_CONCURRENCY, async (member) => {
+		if (signal?.aborted) throw new DOMException('Session restore planning canceled', 'AbortError');
+		if (resolved.has(member.key)) return { member, ref: parseItemFullKey(member.key), item: resolved.get(member.key) };
+		const ref = parseItemFullKey(member.key);
+		const item = ref ? await resolver(ref.libraryID, ref.itemKey) : null;
+		resolved.set(member.key, item);
+		completed++;
+		onProgress?.(completed, total);
+		return { member, ref, item };
+	});
+	for (const { member, ref, item } of resolvedMembers) {
 		const fullKey = member.key;
 		if (seenVirtualKeys.has(fullKey)) continue;
 		seenVirtualKeys.add(fullKey);
-		const ref = parseItemFullKey(fullKey);
-		const item = ref ? await resolve(fullKey, ref) : null;
 		if (item && !item.deleted) {
 			virtualMembers?.push({ ...member, itemID: item.id, parentItemID: item.parentItemID || null });
 		} else if (!missingKeys.has(fullKey)) {

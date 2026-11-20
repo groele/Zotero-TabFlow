@@ -11,6 +11,7 @@ import {
 	executeSessionRestorePlan,
 	exportSessionsJson,
 	parseAndPreviewSessionImport,
+	type ItemKeyResolver,
 	type SessionRestorePlan,
 } from '../services/session-restore.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
@@ -132,15 +133,36 @@ export class PopoverController {
 
 	async previewAndRestoreSession(session: TabSessionSnapshot): Promise<void> {
 		if (this.disposed || this.restoring) return;
+		const controller = new AbortController();
+		const progressByPlan = [{ completed: 0, total: 0 }, { completed: 0, total: 0 }];
+		const resolved = new Map<string, ReturnType<ItemKeyResolver>>();
+		const resolver: ItemKeyResolver = (libraryID, itemKey) => {
+			const key = `${libraryID}:${itemKey}`;
+			let pending = resolved.get(key);
+			if (!pending) {
+				pending = Zotero.Items.getByLibraryAndKeyAsync(libraryID, itemKey).then((item) => item || null).catch(() => null);
+				resolved.set(key, pending);
+			}
+			return pending ?? Promise.resolve(null);
+		};
+		this.preview.openRestoreProgress(session.name, () => controller.abort());
 		try {
 			const openKeys = this.meta.buildTrackedTabs().map((item) => item.key);
 			const [mergePlan, replacePlan] = await Promise.all([
-				buildSessionRestorePlan(this.store, openKeys, session, true),
-				buildSessionRestorePlan(this.store, openKeys, session, false),
+				buildSessionRestorePlan(this.store, openKeys, session, true, resolver, (completed, total) => {
+					progressByPlan[0] = { completed, total };
+					this.preview.updateRestoreProgress(progressByPlan.reduce((n, p) => n + p.completed, 0), progressByPlan.reduce((n, p) => n + p.total, 0));
+				}, controller.signal),
+				buildSessionRestorePlan(this.store, openKeys, session, false, resolver, (completed, total) => {
+					progressByPlan[1] = { completed, total };
+					this.preview.updateRestoreProgress(progressByPlan.reduce((n, p) => n + p.completed, 0), progressByPlan.reduce((n, p) => n + p.total, 0));
+				}, controller.signal),
 			]);
-			if (this.disposed) return;
+			if (this.disposed || controller.signal.aborted) return;
 			this.preview.openRestorePreview(mergePlan, replacePlan, (chosen) => this.executePlan(chosen));
 		} catch (error) {
+			if (controller.signal.aborted || (error as Error)?.name === 'AbortError') return;
+			this.preview.dispose();
 			Zotero.logError(error as Error);
 			Services.prompt.alert(this.win, 'Zotero TabFlow', t('zotero-tabflow-session-restore-error', '加载会话预览失败，请查看 Zotero 错误控制台。'));
 		}

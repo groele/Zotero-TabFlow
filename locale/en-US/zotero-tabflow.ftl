@@ -378,3 +378,6 @@ zotero-tabflow-archive-name = Save this group and close its tabs. Enter a worksp
 zotero-tabflow-archive-overwrite = A workspace with this name exists. Overwrite it?
 zotero-tabflow-archive-remaining = Workspace saved. { $count } tabs remain open, so the group was kept.
 zotero-tabflow-archive-failed = Could not save and close the workspace.
+zotero-tabflow-restore-progress-title = Preparing to restore: { $name }
+zotero-tabflow-restore-progress = Checking papers in this session…
+zotero-tabflow-restore-progress-count = Checking papers: { $completed } / { $total }

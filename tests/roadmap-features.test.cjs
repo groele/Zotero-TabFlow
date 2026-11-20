@@ -171,6 +171,32 @@ test('session restore plan previews open, missing, reassigned, pin diffs and sav
 	assert.ok(store.state.sessions.some((s) => s.kind === 'pre-replace'));
 });
 
+test('session restore bounds lookups, reports monotonic progress, and reuses overlapping virtual-item results', async () => {
+	const store = new TabFlowStore();
+	let active = 0;
+	let peak = 0;
+	let calls = 0;
+	const progress = [];
+	const session = {
+		id: 'bounded', name: 'Large', createdAt: Date.now(), groups: [], assignments: {}, pinned: [],
+		openKeys: Array.from({ length: 20 }, (_, i) => `1:K${i}`),
+		virtualMembers: [{ key: '1:K0', title: 'K0' }, { key: '1:K0', title: 'duplicate' }, { key: '1:V1', title: 'V1' }],
+	};
+	const plan = await buildSessionRestorePlan(store, [], session, true, async (_libraryID, itemKey) => {
+		calls++;
+		active++;
+		peak = Math.max(peak, active);
+		await new Promise((resolve) => setTimeout(resolve, 1));
+		active--;
+		return { id: calls, getField: () => itemKey };
+	}, (completed, total) => progress.push([completed, total]));
+	assert.equal(peak, 6);
+	assert.equal(calls, 21);
+	assert.equal(plan.virtualMembers.length, 2);
+	assert.equal(progress.at(-1)[0], progress.at(-1)[1]);
+	assert.ok(progress.every(([completed], index) => index === 0 || completed >= progress[index - 1][0]));
+});
+
 test('rolling snapshots deduplicate identical layouts, cap at 3, and templates keep structure only', () => {
 	memPrefs.clear();
 	const store = new TabFlowStore();

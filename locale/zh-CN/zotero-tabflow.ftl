@@ -378,3 +378,6 @@ zotero-tabflow-archive-name = 保存本组文献并关闭对应标签。请输�
 zotero-tabflow-archive-overwrite = 同名工作区已存在。要覆盖它吗？
 zotero-tabflow-archive-remaining = 工作区已保存。仍有 { $count } 个标签未关闭，分组已保留。
 zotero-tabflow-archive-failed = 无法保存并关闭工作区。
+zotero-tabflow-restore-progress-title = 正在准备恢复：{ $name }
+zotero-tabflow-restore-progress = 正在检查会话中的文献…
+zotero-tabflow-restore-progress-count = 正在检查文献：{ $completed } / { $total }
