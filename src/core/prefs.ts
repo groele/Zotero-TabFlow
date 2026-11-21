@@ -9,6 +9,8 @@ import type {
 export const PREF_PREFIX = 'extensions.zotero.tabflow.';
 
 export type NewTabMode = 'independent' | 'collection';
+export type PdfPreviewMode = 'section' | 'full';
+export type PdfFolderOpenMode = 'reveal' | 'folder';
 
 export interface TabFlowPrefs {
 	enableHorizontalGroups: boolean;
@@ -43,6 +45,12 @@ export interface TabFlowPrefs {
 	enableCopyReference: boolean;
 	enableShowInFilesystem: boolean;
 	enablePdfFolderSidenav: boolean;
+	pdfFolderOpenMode: PdfFolderOpenMode;
+	enablePdfPreviewSidenav: boolean;
+	pdfPreviewMode: PdfPreviewMode;
+	pdfPreviewDefaultZoom: number;
+	pdfPreviewDoubleClickOpen: boolean;
+	pdfPreviewShowPageBadge: boolean;
 	enableReloadTab: boolean;
 	debug: boolean;
 }
@@ -80,6 +88,12 @@ export const DEFAULT_PREFS: TabFlowPrefs = {
 	enableCopyReference: true,
 	enableShowInFilesystem: true,
 	enablePdfFolderSidenav: true,
+	pdfFolderOpenMode: 'reveal',
+	enablePdfPreviewSidenav: true,
+	pdfPreviewMode: 'section',
+	pdfPreviewDefaultZoom: 100,
+	pdfPreviewDoubleClickOpen: true,
+	pdfPreviewShowPageBadge: true,
 	enableReloadTab: true,
 	debug: false,
 };
@@ -99,10 +113,12 @@ export function invalidatePrefCache(key?: keyof TabFlowPrefs): void {
 
 export function getPref<K extends keyof TabFlowPrefs>(key: K): TabFlowPrefs[K] {
 	if (prefCacheEnabled && prefCache.has(key)) return prefCache.get(key) as TabFlowPrefs[K];
-	const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
+	const raw = (Zotero as any)?.Prefs?.get?.(PREF_PREFIX + key, true);
 	const fallback = DEFAULT_PREFS[key];
 	let val: TabFlowPrefs[K] = typeof raw !== typeof fallback ? fallback : (raw as TabFlowPrefs[K]);
 	if (key === 'newTabMode' && raw !== 'collection' && raw !== 'independent') val = fallback;
+	if (key === 'pdfPreviewMode' && raw !== 'section' && raw !== 'full') val = fallback;
+	if (key === 'pdfFolderOpenMode' && raw !== 'reveal' && raw !== 'folder') val = fallback;
 	const range = NUMERIC_RANGES[key];
 	if (range && typeof raw === 'number') {
 		val = (Number.isFinite(raw) ? Math.max(range[0], Math.min(range[1], Math.trunc(raw))) : fallback) as TabFlowPrefs[K];
@@ -118,6 +134,7 @@ const NUMERIC_RANGES: Partial<Record<keyof TabFlowPrefs, [number, number]>> = {
 	autoSleepMinutes: [0, 1440],
 	activeReaderBudget: [0, 100],
 	staleSuggestDays: [1, 3650],
+	pdfPreviewDefaultZoom: [60, 200],
 };
 
 export function setPref<K extends keyof TabFlowPrefs>(key: K, value: TabFlowPrefs[K]): void {

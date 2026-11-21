@@ -7,7 +7,7 @@
     <html:header class="tabflow-settings-header">
         <html:div class="tabflow-settings-title-row">
             <html:h1 data-l10n-id="zotero-tabflow-settings-heading"></html:h1>
-            <html:span id="tabflow-version-badge" data-l10n-id="zotero-tabflow-version-badge" data-l10n-args='{"version":"17.9.3"}' class="tabflow-version-badge"></html:span>
+            <html:span id="tabflow-version-badge" data-l10n-id="zotero-tabflow-version-badge" data-l10n-args='{"version":"17.10.0"}' class="tabflow-version-badge"></html:span>
         </html:div>
         <html:p data-l10n-id="zotero-tabflow-settings-intro"></html:p>
     </html:header>
@@ -213,10 +213,51 @@
                 <checkbox id="tabflow-pref-enableItemContextMenu" preference="extensions.zotero.tabflow.enableItemContextMenu" native="true" data-l10n-id="zotero-tabflow-pref-enable-item-context-menu"/>
                 <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-item-context-menu-desc"></description>
             </html:div>
+        </html:div>
+    </html:details>
+
+    <!-- Card 5: Right Sidebar PDF Tools & Preview -->
+    <html:details class="tabflow-settings-card">
+        <html:summary>
+            <html:span data-l10n-id="zotero-tabflow-card-sidebar-pdf-heading"></html:span>
+        </html:summary>
+        <html:div class="tabflow-settings-card-content">
+            <description class="tabflow-settings-description tabflow-card-lead" data-l10n-id="zotero-tabflow-card-sidebar-pdf-intro"></description>
+
+            <html:div class="tabflow-subgroup">
+                <checkbox id="tabflow-pref-enablePdfPreviewSidenav" preference="extensions.zotero.tabflow.enablePdfPreviewSidenav" native="true" data-l10n-id="zotero-tabflow-pref-enable-pdf-preview-sidenav"/>
+                <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-pdf-preview-sidenav-desc"></description>
+                <html:div id="tabflow-sub-pdfPreviewSettings" class="tabflow-subordinate-stack">
+                    <html:div class="tabflow-subordinate-row">
+                        <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-pdf-preview-mode" control="tabflow-pref-pdfPreviewMode"></label>
+                        <menulist id="tabflow-pref-pdfPreviewMode" native="true" preference="extensions.zotero.tabflow.pdfPreviewMode">
+                            <menupopup>
+                                <menuitem value="section" data-l10n-id="zotero-tabflow-pdf-preview-mode-section"/>
+                                <menuitem value="full" data-l10n-id="zotero-tabflow-pdf-preview-mode-full"/>
+                            </menupopup>
+                        </menulist>
+                    </html:div>
+                    <html:div class="tabflow-subordinate-row">
+                        <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-pdf-preview-default-zoom" control="tabflow-pref-pdfPreviewDefaultZoom"></label>
+                        <html:input class="html-input" id="tabflow-pref-pdfPreviewDefaultZoom" type="number" min="60" max="200" step="10" data-preference="extensions.zotero.tabflow.pdfPreviewDefaultZoom"/>
+                    </html:div>
+                    <checkbox id="tabflow-pref-pdfPreviewDoubleClickOpen" preference="extensions.zotero.tabflow.pdfPreviewDoubleClickOpen" native="true" data-l10n-id="zotero-tabflow-pref-pdf-preview-dblclick"/>
+                    <checkbox id="tabflow-pref-pdfPreviewShowPageBadge" preference="extensions.zotero.tabflow.pdfPreviewShowPageBadge" native="true" data-l10n-id="zotero-tabflow-pref-pdf-preview-page-badge"/>
+                </html:div>
+            </html:div>
 
             <html:div class="tabflow-subgroup">
                 <checkbox id="tabflow-pref-enablePdfFolderSidenav" preference="extensions.zotero.tabflow.enablePdfFolderSidenav" native="true" data-l10n-id="zotero-tabflow-pref-enable-pdf-folder-sidenav"/>
                 <description class="tabflow-settings-description tabflow-subordinate" data-l10n-id="zotero-tabflow-pref-enable-pdf-folder-sidenav-desc"></description>
+                <html:div id="tabflow-sub-pdfFolderSettings" class="tabflow-subordinate-row">
+                    <label class="tabflow-subordinate-label" data-l10n-id="zotero-tabflow-pref-pdf-folder-open-mode" control="tabflow-pref-pdfFolderOpenMode"></label>
+                    <menulist id="tabflow-pref-pdfFolderOpenMode" native="true" preference="extensions.zotero.tabflow.pdfFolderOpenMode">
+                        <menupopup>
+                            <menuitem value="reveal" data-l10n-id="zotero-tabflow-pdf-folder-mode-reveal"/>
+                            <menuitem value="folder" data-l10n-id="zotero-tabflow-pdf-folder-mode-folder"/>
+                        </menupopup>
+                    </menulist>
+                </html:div>
             </html:div>
         </html:div>
     </html:details>

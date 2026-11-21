@@ -65,6 +65,12 @@
     enableCopyReference: true,
     enableShowInFilesystem: true,
     enablePdfFolderSidenav: true,
+    pdfFolderOpenMode: "reveal",
+    enablePdfPreviewSidenav: true,
+    pdfPreviewMode: "section",
+    pdfPreviewDefaultZoom: 100,
+    pdfPreviewDoubleClickOpen: true,
+    pdfPreviewShowPageBadge: true,
     enableReloadTab: true,
     debug: false
   };
@@ -72,10 +78,12 @@
   var prefCache = /* @__PURE__ */ new Map();
   function getPref(key) {
     if (prefCacheEnabled && prefCache.has(key)) return prefCache.get(key);
-    const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
+    const raw = Zotero?.Prefs?.get?.(PREF_PREFIX + key, true);
     const fallback = DEFAULT_PREFS[key];
     let val = typeof raw !== typeof fallback ? fallback : raw;
     if (key === "newTabMode" && raw !== "collection" && raw !== "independent") val = fallback;
+    if (key === "pdfPreviewMode" && raw !== "section" && raw !== "full") val = fallback;
+    if (key === "pdfFolderOpenMode" && raw !== "reveal" && raw !== "folder") val = fallback;
     const range = NUMERIC_RANGES[key];
     if (range && typeof raw === "number") {
       val = Number.isFinite(raw) ? Math.max(range[0], Math.min(range[1], Math.trunc(raw))) : fallback;
@@ -89,7 +97,8 @@
     verticalTabFontSize: [10, 22],
     autoSleepMinutes: [0, 1440],
     activeReaderBudget: [0, 100],
-    staleSuggestDays: [1, 3650]
+    staleSuggestDays: [1, 3650],
+    pdfPreviewDefaultZoom: [60, 200]
   };
   function resetAllPrefs() {
     prefCache.clear();
@@ -129,6 +138,8 @@
     setSubtreeDisabled(doc.getElementById("tabflow-sub-autoSleepMinutes"), !getPref("enableTabSleep"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-staleSuggestDays"), !getPref("enableStaleSuggestions"));
     setSubtreeDisabled(doc.getElementById("tabflow-sub-tabContextActions"), !getPref("enableTabContextMenu"));
+    setSubtreeDisabled(doc.getElementById("tabflow-sub-pdfPreviewSettings"), !getPref("enablePdfPreviewSidenav"));
+    setSubtreeDisabled(doc.getElementById("tabflow-sub-pdfFolderSettings"), !getPref("enablePdfFolderSidenav"));
     scheduleMenulistSync(doc);
   }
   var TabFlowPreferences = {
@@ -163,6 +174,10 @@
           "enableTabSleep",
           "enableStaleSuggestions",
           "enableTabContextMenu",
+          "enablePdfPreviewSidenav",
+          "pdfPreviewMode",
+          "enablePdfFolderSidenav",
+          "pdfFolderOpenMode",
           "multiCollectionStrategy",
           "remarkDisplayMode",
           "verticalTabTitleMode",

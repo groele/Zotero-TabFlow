@@ -8,6 +8,7 @@ import { TabActionService } from './services/tab-actions.ts';
 import { HorizontalBarController } from './ui/horizontal-bar.ts';
 import { ItemContextMenuController } from './ui/item-context-menu.ts';
 import { PdfFolderSectionController } from './ui/pdf-folder-section.ts';
+import { PdfPreviewSectionController } from './ui/pdf-preview-section.ts';
 import { PopoverController } from './ui/popovers.ts';
 import { SidebarHoverCard } from './ui/sidebar-hover.ts';
 import { SpotlightController } from './ui/spotlight.ts';
@@ -227,6 +228,7 @@ class TabFlowPlugin {
 	private store = new TabFlowStore();
 	private windows = new Map<Window, WindowWorkspace>();
 	private pdfFolderSection = new PdfFolderSectionController();
+	private pdfPreviewSection = new PdfPreviewSectionController();
 	private prefObserverIDs: symbol[] = [];
 	private nextRollingAt = 0;
 	private unsubscribeStore: (() => void) | null = null;
@@ -244,6 +246,7 @@ class TabFlowPlugin {
 		this.nextRollingAt = Date.now() + 300_000;
 		if (getPref('debug')) Zotero.debug('[TabFlow] Workspace state loaded');
 		this.pdfFolderSection.register(this.id, this.rootURI);
+		this.pdfPreviewSection.register(this.id, this.rootURI);
 		this.unsubscribeStore = this.store.subscribe(() => this.refreshAll());
 		this.prefObserverIDs = (Object.keys(DEFAULT_PREFS) as Array<keyof typeof DEFAULT_PREFS>).map((key) =>
 			Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => { invalidatePrefCache(key); this.refreshAll(); }, true),
@@ -282,6 +285,7 @@ class TabFlowPlugin {
 		enablePrefCache(false);
 		resetI18nCache();
 		this.pdfFolderSection.unregister();
+		this.pdfPreviewSection.unregister();
 		for (const id of this.prefObserverIDs) Zotero.Prefs.unregisterObserver(id);
 		this.prefObserverIDs = [];
 		this.unsubscribeStore?.();

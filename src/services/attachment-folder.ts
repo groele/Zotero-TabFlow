@@ -1,3 +1,5 @@
+import { getPref } from '../core/prefs.ts';
+
 const RECENT_LAUNCH_INTERVAL_MS = 500;
 const lastLaunched = new Map<string, number>();
 
@@ -23,6 +25,11 @@ export async function openAttachmentFolder(item: any, fallbackWin?: Window | nul
 			lastLaunched.set(cacheKey, now);
 		}
 		try {
+			const openMode = getPref('pdfFolderOpenMode');
+			if (openMode === 'folder' && folder && (Zotero as any).launchFile) {
+				await (Zotero as any).launchFile(folder);
+				return true;
+			}
 			if (nsFile && nsFile.exists?.() !== false && typeof nsFile.reveal === 'function') {
 				try {
 					await Promise.resolve(nsFile.reveal());

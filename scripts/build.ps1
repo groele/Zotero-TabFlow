@@ -10,7 +10,7 @@ if (-not $VerifyOnly) {
 }
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'manifest.json') | ConvertFrom-Json
 if (-not $OutputPath) { $OutputPath = Join-Path $projectRoot ('dist\Zotero-TabFlow-' + $manifest.version + '.xpi') }
-$runtimeFiles = @('manifest.json','bootstrap.js','prefs.js','prefs.xhtml','settings.css','tabflow.svg','pdf-folder.svg','zoterotabflow.js','zoterotabflow_prefs.js','LICENSE')
+$runtimeFiles = @('manifest.json','bootstrap.js','prefs.js','prefs.xhtml','settings.css','tabflow.svg','pdf-folder.svg','pdf-preview.svg','pdf-preview-sidenav.svg','pdf-preview-16.png','pdf-preview-20.png','pdf-preview-32.png','pdf-preview-64.png','zoterotabflow.js','zoterotabflow_prefs.js','LICENSE')
 $entries = @($runtimeFiles | ForEach-Object {
     [PSCustomObject]@{ Source = Join-Path $projectRoot $_; Name = $_ }
 })

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="20" height="20" fill="none" role="img" aria-label="Zotero TabFlow PDF Preview">
+  <title>Zotero TabFlow PDF Preview</title>
+  <desc>Adobe PDF inspired continuous trefoil ribbon icon with vibrant crimson-coral gradient.</desc>
+  <defs>
+    <linearGradient id="ztfAdobeTrefoil" x1="18" y1="14" x2="112" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF4B4B" />
+      <stop offset="48%" stop-color="#E11D2E" />
+      <stop offset="100%" stop-color="#B91C1C" />
+    </linearGradient>
+    <linearGradient id="ztfAdobeHighlight" x1="52" y1="12" x2="114" y2="88" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FB7185" />
+      <stop offset="50%" stop-color="#EF4444" />
+      <stop offset="100%" stop-color="#DC2626" />
+    </linearGradient>
+  </defs>
+
+  <!-- Adobe PDF Signature Continuous Trefoil Ribbon Loop -->
+  <path
+    d="M 61 15
+       C 54 15, 51 24, 54 37
+       C 57 50, 66 67, 79 79
+       C 91 90, 104 94, 110 89
+       C 116 84, 113 75, 101 73
+       C 87 71, 66 75, 46 84
+       C 27 92, 14 103, 17 110
+       C 20 116, 31 113, 43 99
+       C 56 84, 66 61, 69 40
+       C 72 23, 68 15, 61 15 Z"
+    stroke="url(#ztfAdobeTrefoil)"
+    stroke-width="11.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

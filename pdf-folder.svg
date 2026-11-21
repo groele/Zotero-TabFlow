@@ -1,11 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="20" height="20" fill="none" role="img" aria-label="Open PDF Folder">
+  <title>Open PDF Folder</title>
+  <desc>Full-optical-scale airy wire-frame folder with coral-orange launch arrow aligned with the Zotero Flow icon family.</desc>
   <defs>
-    <linearGradient id="ztf-fg" x1="1.5" y1="3" x2="14" y2="13.5" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38BDF8"/>
-      <stop offset="100%" stop-color="#2563EB"/>
+    <linearGradient id="ztfFolderStroke" x1="12" y1="24" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="55%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#4F46E5" />
+    </linearGradient>
+    <linearGradient id="ztfFolderFill" x1="14" y1="30" x2="106" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.20" />
+      <stop offset="100%" stop-color="#2563EB" stop-opacity="0.09" />
+    </linearGradient>
+    <linearGradient id="ztfFolderArrow" x1="68" y1="16" x2="116" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FB923C" />
+      <stop offset="100%" stop-color="#F43F5E" />
     </linearGradient>
   </defs>
-  <path d="M1.8 4.4C1.8 3.63 2.43 3 3.2 3H6.1L7.45 4.4H11.5M13.8 8.2V11.8C13.8 12.57 13.17 13.2 12.4 13.2H3.2C2.43 13.2 1.8 12.57 1.8 11.8V4.4Z" fill="url(#ztf-fg)" fill-opacity="0.12" stroke="url(#ztf-fg)" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M1.8 7.2H9.6" stroke="url(#ztf-fg)" stroke-width="1.25" stroke-linecap="round"/>
-  <path d="M10.4 5.6L14.2 1.8M14.2 1.8H11.2M14.2 1.8V4.8" stroke="#F97316" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Soft Translucent Folder Body -->
+  <path d="M 14 36 C 14 28.5 19.5 23 27 23 H 50 L 62 35 H 96 C 103.5 35 109 40.5 109 48 V 98 C 109 105.5 103.5 111 96 111 H 27 C 19.5 111 14 105.5 14 98 Z" fill="url(#ztfFolderFill)" />
+
+  <!-- Open Wire-Frame Folder Outline (leaves top-right open for launch arrow) -->
+  <path d="M 65 35 H 52 L 42 23 H 27 C 19.5 23 14 28.5 14 36 V 98 C 14 105.5 19.5 111 27 111 H 96 C 103.5 111 109 105.5 109 98 V 68" stroke="url(#ztfFolderStroke)" stroke-width="11.5" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Subtle Inner Folder Flap Line -->
+  <path d="M 16 54 H 66" stroke="#0EA5E9" stroke-width="10" stroke-linecap="round" opacity="0.88" />
+
+  <!-- Breaking-Out Coral-Orange Launch Arrow -->
+  <path d="M 78 50 L 112 16 M 86 16 H 112 V 42" stroke="url(#ztfFolderArrow)" stroke-width="12.5" stroke-linecap="round" stroke-linejoin="round" />
 </svg>

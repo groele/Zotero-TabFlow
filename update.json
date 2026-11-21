@@ -3,15 +3,15 @@
     "zotero-tabflow@groele": {
       "updates": [
         {
-          "version": "17.9.3",
-          "update_link": "https://github.com/groele/Zotero-TabFlow/releases/download/v17.9.3/Zotero-TabFlow-17.9.3.xpi",
+          "version": "17.10.0",
+          "update_link": "https://github.com/groele/Zotero-TabFlow/releases/download/v17.10.0/Zotero-TabFlow-17.10.0.xpi",
           "applications": {
             "zotero": {
               "strict_min_version": "10.0",
               "strict_max_version": "12.*"
             }
           },
-          "update_hash": "sha512:26b733ca4d9a61daa9f34dd56fa0b8cd858a630bd965530a41e1eb05a22ecc2c39aaea3f22c1d1e0a80f97a4badfb3d27b08a8d9414c847b1113f4765a14177d"
+          "update_hash": "sha512:160120bfe6b9058f5fd886202cc1123acb67146d87d6b53fb627280357ac4c75526e0d74c9b6c998e6d0da09c58250da25e4cbe070162c69e869474aa828a54c"
         }
       ]
     }

@@ -69,6 +69,12 @@
     enableCopyReference: true,
     enableShowInFilesystem: true,
     enablePdfFolderSidenav: true,
+    pdfFolderOpenMode: "reveal",
+    enablePdfPreviewSidenav: true,
+    pdfPreviewMode: "section",
+    pdfPreviewDefaultZoom: 100,
+    pdfPreviewDoubleClickOpen: true,
+    pdfPreviewShowPageBadge: true,
     enableReloadTab: true,
     debug: false
   };
@@ -84,10 +90,12 @@
   }
   function getPref(key) {
     if (prefCacheEnabled && prefCache.has(key)) return prefCache.get(key);
-    const raw = Zotero.Prefs.get(PREF_PREFIX + key, true);
+    const raw = Zotero?.Prefs?.get?.(PREF_PREFIX + key, true);
     const fallback = DEFAULT_PREFS[key];
     let val = typeof raw !== typeof fallback ? fallback : raw;
     if (key === "newTabMode" && raw !== "collection" && raw !== "independent") val = fallback;
+    if (key === "pdfPreviewMode" && raw !== "section" && raw !== "full") val = fallback;
+    if (key === "pdfFolderOpenMode" && raw !== "reveal" && raw !== "folder") val = fallback;
     const range = NUMERIC_RANGES[key];
     if (range && typeof raw === "number") {
       val = Number.isFinite(raw) ? Math.max(range[0], Math.min(range[1], Math.trunc(raw))) : fallback;
@@ -101,7 +109,8 @@
     verticalTabFontSize: [10, 22],
     autoSleepMinutes: [0, 1440],
     activeReaderBudget: [0, 100],
-    staleSuggestDays: [1, 3650]
+    staleSuggestDays: [1, 3650],
+    pdfPreviewDefaultZoom: [60, 200]
   };
   function setPref(key, value) {
     prefCache.delete(key);
@@ -994,6 +1003,11 @@
         lastLaunched.set(cacheKey, now);
       }
       try {
+        const openMode = getPref("pdfFolderOpenMode");
+        if (openMode === "folder" && folder && Zotero.launchFile) {
+          await Zotero.launchFile(folder);
+          return true;
+        }
         if (nsFile && nsFile.exists?.() !== false && typeof nsFile.reveal === "function") {
           try {
             await Promise.resolve(nsFile.reveal());
@@ -2895,6 +2909,1009 @@ ${t("zotero-tabflow-collection-label", "集合")}：${tab.collection}`;
         this.sectionID = false;
       }
       this.states.clear();
+    }
+  };
+
+  // src/services/pdf-preview-renderer.ts
+  var PDFJS_MODULE_URL = "resource://zotero/reader/pdf/build/pdf.mjs";
+  var PDFJS_WORKER_URL = "resource://zotero/reader/pdf/build/pdf.worker.mjs";
+  var PDFJS_CMAP_URL = "resource://zotero/reader/pdf/web/cmaps/";
+  var PDFJS_FONT_URL = "resource://zotero/reader/pdf/web/standard_fonts/";
+  var customPdfJsLoader = null;
+  var cachedPdfJsLib = null;
+  function isPdfAttachment(att) {
+    if (!att || att.deleted || att.isTrashed?.()) return false;
+    if (typeof att.isPDFAttachment === "function") return Boolean(att.isPDFAttachment());
+    if (att.isFileAttachment?.() === false) return false;
+    const mime = String(att.attachmentContentType || "").toLowerCase();
+    if (mime === "application/pdf") return true;
+    const name = String(att.attachmentFilename || att.getField?.("title") || "").toLowerCase();
+    return name.endsWith(".pdf");
+  }
+  function getAttachmentTitle(att, index) {
+    const raw = String(att?.getField?.("title") || att?.attachmentFilename || "").trim();
+    return raw || `PDF ${index + 1}`;
+  }
+  async function resolveAllPdfAttachments(item) {
+    if (!item || item.deleted || item.isTrashed?.()) return [];
+    if (isPdfAttachment(item)) {
+      return [{ id: Number(item.id) || 0, title: getAttachmentTitle(item, 0), attachment: item }];
+    }
+    const target = !item.isRegularItem?.() && item.parentItem ? item.parentItem : item;
+    if (isPdfAttachment(target)) {
+      return [{ id: Number(target.id) || 0, title: getAttachmentTitle(target, 0), attachment: target }];
+    }
+    const results = [];
+    const seen = /* @__PURE__ */ new Set();
+    const pushIfPdf = (att) => {
+      if (!isPdfAttachment(att)) return;
+      const id = Number(att.id) || results.length + 1;
+      if (seen.has(id)) return;
+      seen.add(id);
+      results.push({ id, title: getAttachmentTitle(att, results.length), attachment: att });
+    };
+    const best = await target.getBestAttachment?.().catch(() => null);
+    pushIfPdf(best);
+    const ids = target.getAttachments?.() || [];
+    if (ids.length && Zotero.Items?.getAsync) {
+      const attachments = await Zotero.Items.getAsync(ids).catch(() => []);
+      for (const att of attachments) pushIfPdf(att);
+    }
+    return results;
+  }
+  async function resolveAttachmentPath(att) {
+    if (!att) return null;
+    const path = await att.getFilePathAsync?.().catch(() => null) || att.getFilePath?.();
+    return typeof path === "string" && path.trim() ? path : null;
+  }
+  function binaryStringToUint8Array(raw) {
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i) & 255;
+    return bytes;
+  }
+  async function readPdfBytes(filePath) {
+    const ioUtils = globalThis.IOUtils || Zotero.getMainWindow?.()?.IOUtils;
+    if (ioUtils?.read) {
+      const data = await ioUtils.read(filePath);
+      return data instanceof Uint8Array ? data : new Uint8Array(data);
+    }
+    if (Zotero.File?.getBinaryContentsAsync) {
+      const raw = await Zotero.File.getBinaryContentsAsync(filePath);
+      return raw instanceof Uint8Array ? raw : binaryStringToUint8Array(String(raw || ""));
+    }
+    throw new Error("No file reader available for PDF preview");
+  }
+  function tryImportModule(cu, url) {
+    if (!cu?.importESModule) return null;
+    for (const opts of [{ global: "current" }, null]) {
+      try {
+        const mod = opts !== null ? cu.importESModule(url, opts) : cu.importESModule(url);
+        if (mod) return mod;
+      } catch {
+      }
+    }
+    return null;
+  }
+  async function loadPdfJsLib(win) {
+    if (customPdfJsLoader) {
+      const mocked = await customPdfJsLoader();
+      if (!mocked) throw new Error("PDF.js unavailable");
+      return mocked;
+    }
+    if (cachedPdfJsLib) return cachedPdfJsLib;
+    const hostWin = win || Zotero.getMainWindow?.();
+    if (hostWin && !globalThis.window) {
+      try {
+        globalThis.window = hostWin;
+        globalThis.document = hostWin.document;
+      } catch {
+      }
+    }
+    const winCu = hostWin?.ChromeUtils;
+    const globalCu = globalThis.ChromeUtils;
+    const workerMod = tryImportModule(winCu, PDFJS_WORKER_URL) || tryImportModule(globalCu, PDFJS_WORKER_URL);
+    if (workerMod) {
+      try {
+        globalThis.pdfjsWorker = workerMod;
+        if (hostWin) hostWin.pdfjsWorker = workerMod;
+      } catch {
+      }
+    }
+    let mod = tryImportModule(winCu, PDFJS_MODULE_URL) || tryImportModule(globalCu, PDFJS_MODULE_URL);
+    if (typeof mod?.getDocument !== "function") {
+      try {
+        mod = await import(
+          /* @vite-ignore */
+          PDFJS_MODULE_URL
+        );
+      } catch {
+        mod = null;
+      }
+    }
+    if (typeof mod?.getDocument !== "function") {
+      throw new Error("Failed to load Zotero PDF.js module");
+    }
+    if (mod.GlobalWorkerOptions && !mod.GlobalWorkerOptions.workerSrc) {
+      mod.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+    }
+    cachedPdfJsLib = mod;
+    return mod;
+  }
+  async function openPdfDocumentFromFile(filePath, doc) {
+    const win = doc?.defaultView || Zotero.getMainWindow?.();
+    const ownerDocument = doc || win?.document;
+    const [pdfjsLib, data] = await Promise.all([loadPdfJsLib(win), readPdfBytes(filePath)]);
+    const loadingTask = pdfjsLib.getDocument({
+      data,
+      ownerDocument,
+      isEvalSupported: false,
+      useWorkerFetch: false,
+      cMapUrl: PDFJS_CMAP_URL,
+      cMapPacked: true,
+      standardFontDataUrl: PDFJS_FONT_URL
+    });
+    return await loadingTask.promise;
+  }
+  async function renderPageToCanvas(pdfDoc, pageNumber, canvas, targetWidth, zoomRatio, dpr, isAborted, onTask) {
+    const page = await pdfDoc.getPage(pageNumber);
+    if (isAborted()) {
+      page.cleanup?.();
+      return { width: 0, height: 0, cancel: () => {
+      } };
+    }
+    const baseViewport = page.getViewport({ scale: 1 });
+    const safeWidth = Math.max(120, targetWidth);
+    const cssScale = safeWidth / Math.max(1, baseViewport.width) * zoomRatio;
+    const cssViewport = page.getViewport({ scale: cssScale });
+    const pixelRatio = Math.max(1.25, Math.min(3, (dpr || 1) * 1.15));
+    canvas.width = Math.max(1, Math.floor(cssViewport.width * pixelRatio));
+    canvas.height = Math.max(1, Math.floor(cssViewport.height * pixelRatio));
+    if (Math.abs(zoomRatio - 1) < 0.01) {
+      canvas.style.width = "100%";
+      canvas.style.height = "auto";
+    } else {
+      canvas.style.width = `${Math.floor(cssViewport.width)}px`;
+      canvas.style.height = `${Math.floor(cssViewport.height)}px`;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas 2D context unavailable");
+    const transform = pixelRatio === 1 ? void 0 : [pixelRatio, 0, 0, pixelRatio, 0, 0];
+    const task = page.render({ canvasContext: ctx, viewport: cssViewport, transform });
+    const cancel = () => {
+      try {
+        task.cancel?.();
+      } catch {
+      }
+    };
+    onTask?.(cancel);
+    try {
+      await task.promise;
+    } catch (err) {
+      if (err?.name === "RenderingCancelledException" || isAborted()) {
+        return { width: 0, height: 0, cancel };
+      }
+      throw err;
+    } finally {
+      page.cleanup?.();
+    }
+    return {
+      width: Math.floor(cssViewport.width),
+      height: Math.floor(cssViewport.height),
+      cancel
+    };
+  }
+  async function openPdfInReader(att, win, pageNumber) {
+    if (!att?.id) return false;
+    const location = typeof pageNumber === "number" && pageNumber > 1 ? { pageIndex: pageNumber - 1 } : void 0;
+    try {
+      if (Zotero.Reader?.open) {
+        try {
+          await Zotero.Reader.open(att.id, location, { openInWindow: false });
+        } catch {
+          await Zotero.Reader.open(att.id, void 0, { openInWindow: false });
+        }
+        return true;
+      }
+      const targetWin = win?.ZoteroPane ? win : Zotero.getMainWindow?.();
+      if (targetWin?.ZoteroPane?.viewAttachment) {
+        await targetWin.ZoteroPane.viewAttachment([att.id]);
+        return true;
+      }
+      if (targetWin?.ZoteroPane?.viewItems) {
+        await targetWin.ZoteroPane.viewItems([att]);
+        return true;
+      }
+    } catch (error) {
+      Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+    }
+    return false;
+  }
+
+  // src/ui/item-pane-section-compat.ts
+  var XHTML_NS = "http://www.w3.org/1999/xhtml";
+  var SVG_NS2 = "http://www.w3.org/2000/svg";
+  var STYLE_ID = "tabflow-pdf-preview-styles";
+  var PREVIEW_CSS = `
+.ztf-pdf-root {
+	display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px;
+	min-inline-size: 0; inline-size: 100%; contain: inline-size;
+	font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+	padding: 2px 0 4px 0; color: var(--fill-primary, currentColor);
+}
+.ztf-pdf-toolbar {
+	display: flex; align-items: center; justify-content: space-between;
+	gap: 4px; flex-wrap: wrap; min-block-size: 24px; padding: 0 1px 4px;
+	background: transparent;
+	border-bottom: 1px solid var(--fill-quinary, color-mix(in srgb, currentColor 7%, transparent));
+}
+.ztf-pdf-att-select {
+	flex: 1 1 100%; min-inline-size: 0; inline-size: 100%; block-size: 22px;
+	padding: 0 6px; margin-top: 2px; border-radius: 4px;
+	border: 1px solid var(--fill-quarternary, rgba(127, 127, 127, 0.22));
+	background: var(--material-background, transparent);
+	color: var(--fill-primary, inherit); font: 500 11px/1.3 system-ui, sans-serif; cursor: pointer;
+}
+.ztf-pdf-btn-group { display: flex; align-items: center; gap: 2px; }
+.ztf-pdf-btn {
+	appearance: none !important; -moz-appearance: none !important; box-sizing: border-box;
+	display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+	min-inline-size: 20px !important; min-block-size: 20px !important; block-size: 20px !important;
+	margin: 0 !important; padding: 0 5px !important;
+	border: 1px solid transparent !important; border-radius: 4px !important;
+	background: transparent !important; box-shadow: none !important;
+	color: var(--fill-secondary, inherit); font: 500 11.5px/1 system-ui, sans-serif;
+	cursor: pointer; user-select: none;
+	transition: background-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+}
+.ztf-pdf-btn-svg { inline-size: 12px; block-size: 12px; flex-shrink: 0; pointer-events: none; }
+.ztf-pdf-btn:hover:not(:disabled) {
+	background: var(--fill-quinary, color-mix(in srgb, currentColor 8%, transparent)) !important;
+	color: var(--fill-primary, inherit);
+}
+.ztf-pdf-btn:active:not(:disabled) {
+	background: var(--fill-quarternary, color-mix(in srgb, currentColor 14%, transparent)) !important;
+}
+.ztf-pdf-btn:disabled { opacity: 0.32; cursor: default; }
+.ztf-pdf-open-btn {
+	padding: 0 7px !important; color: var(--accent-blue, #4072e5) !important;
+	background: var(--accent-blue10, rgba(64, 114, 229, 0.1)) !important;
+	font-weight: 500; font-size: 11px;
+}
+.ztf-pdf-open-btn:hover:not(:disabled) {
+	background: var(--accent-blue30, rgba(64, 114, 229, 0.2)) !important;
+	color: var(--accent-blue, #4072e5) !important;
+}
+.ztf-pdf-page-label {
+	min-inline-size: 38px; padding: 2px 4px; border-radius: 4px;
+	text-align: center; font-variant-numeric: tabular-nums;
+	color: var(--fill-secondary, inherit); font-size: 11px;
+	cursor: pointer; user-select: none;
+	transition: background-color 0.12s ease, color 0.12s ease;
+}
+.ztf-pdf-page-label:hover {
+	background: var(--fill-quinary, color-mix(in srgb, currentColor 8%, transparent));
+	color: var(--fill-primary, inherit);
+}
+.ztf-pdf-page-input {
+	inline-size: 38px; block-size: 19px; padding: 0 3px; border-radius: 4px;
+	border: 1px solid var(--accent-blue, #4072e5);
+	background: var(--material-background, #fff); color: var(--fill-primary, inherit);
+	font: 500 11px/1 system-ui, sans-serif; text-align: center; outline: none;
+}
+.ztf-pdf-status {
+	padding: 12px 8px; color: var(--fill-secondary, inherit);
+	font-size: 12px; text-align: center; display: none; overflow-wrap: anywhere;
+}
+.ztf-pdf-viewport {
+	position: relative; display: flex; flex-direction: column; align-items: stretch;
+	gap: 8px; max-block-size: calc(100vh - 170px);
+	overflow-y: auto; overflow-x: auto; padding: 2px 0 4px; background: transparent;
+	scrollbar-width: thin; outline: none;
+	scrollbar-color: var(--color-scrollbar, rgba(127, 127, 127, 0.38)) transparent;
+}
+.ztf-pdf-page-card {
+	position: relative; flex: 0 0 auto; flex-shrink: 0; display: block;
+	inline-size: 100%; box-sizing: border-box; background: #fff;
+	border-radius: 5px; border: 1px solid var(--fill-quarternary, rgba(0, 0, 0, 0.12));
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); overflow: hidden; cursor: pointer;
+	transition: border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.ztf-pdf-page-card:hover {
+	border-color: var(--accent-blue50, rgba(64, 114, 229, 0.45));
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.09);
+}
+.ztf-pdf-page-card[data-unrendered="true"] {
+	aspect-ratio: 1 / 1.4142; min-block-size: 320px;
+	background: var(--fill-senary, rgba(0, 0, 0, 0.02));
+}
+.ztf-pdf-canvas { display: block; inline-size: 100%; block-size: auto; background: #fff; }
+.ztf-pdf-page-badge {
+	position: absolute; inset-inline-end: 6px; inset-block-end: 6px;
+	padding: 1px 6px; border-radius: 999px; font: 500 10px/1.35 system-ui, sans-serif;
+	font-variant-numeric: tabular-nums; background: rgba(15, 23, 42, 0.56);
+	color: #fff; pointer-events: none; opacity: 0.72; transition: opacity 0.14s ease;
+}
+.ztf-pdf-page-card:hover .ztf-pdf-page-badge { opacity: 0.95; }
+.ztf-pdf-root[data-show-badge="false"] .ztf-pdf-page-badge { display: none; }
+[data-ztf-pdf-full-hidden="true"], [data-ztf-pdf-full-stack="true"] > :not([data-ztf-pdf-full-section="true"]) { display: none !important; }
+[data-ztf-pdf-full-stack="true"] {
+	display: flex !important; flex-direction: column !important;
+	block-size: 100% !important; max-block-size: 100% !important; overflow: hidden !important;
+}
+[data-ztf-pdf-full-section="true"],
+[data-ztf-pdf-full-section="true"] > collapsible-section,
+[data-ztf-pdf-full-section="true"] > collapsible-section > [data-type="body"] {
+	display: flex !important; flex-direction: column !important;
+	flex: 1 1 auto !important; block-size: 100% !important; min-block-size: 0 !important;
+}
+[data-ztf-pdf-full-section="true"] > collapsible-section > .head { display: none !important; }
+.ztf-pdf-root[data-layout-mode="full"] {
+	display: flex; flex-direction: column; flex: 1 1 auto; block-size: 100%; min-block-size: 0;
+}
+.ztf-pdf-root[data-layout-mode="full"] .ztf-pdf-viewport {
+	flex: 1 1 auto; max-block-size: calc(100vh - 96px); block-size: 100%;
+}
+`;
+  var TOOL_SVG_PATHS = {
+    prev: "M10 3.5L5.5 8L10 12.5",
+    next: "M6 3.5L10.5 8L6 12.5",
+    zoomOut: "M3.8 8H12.2",
+    zoomIn: "M8 3.8V12.2M3.8 8H12.2",
+    toggleMode: "M2.5 5.5V2.5H5.5M10.5 2.5H13.5V5.5M13.5 10.5V13.5H10.5M5.5 13.5H2.5V10.5",
+    openReader: "M9.5 2.8H13.2V6.5M13 3L7.5 8.5M11.5 9.2V12.4C11.5 12.84 11.14 13.2 10.7 13.2H3.6C3.16 13.2 2.8 12.84 2.8 12.4V5.3C2.8 4.86 3.16 4.5 3.6 4.5H6.8"
+  };
+  var STATUS_FALLBACKS = {
+    "zotero-tabflow-pdf-preview-loading": "正在加载 PDF 预览…",
+    "zotero-tabflow-pdf-preview-unavailable": "当前条目无可用的 PDF 附件",
+    "zotero-tabflow-pdf-preview-missing-file": "找不到本地 PDF 文件，请先检查附件存储路径",
+    "zotero-tabflow-pdf-preview-error": "无法渲染此 PDF，请尝试在阅读器中打开"
+  };
+  function ensurePreviewStyles(doc) {
+    if (!doc?.getElementById) return;
+    let style = doc.getElementById(STYLE_ID);
+    if (!style) {
+      style = createXhtmlEl(doc, "style");
+      style.id = STYLE_ID;
+      (doc.head || doc.documentElement)?.append(style);
+    }
+    if (style.textContent !== PREVIEW_CSS) style.textContent = PREVIEW_CSS;
+  }
+  function removePreviewStyles(doc) {
+    doc?.getElementById?.(STYLE_ID)?.remove?.();
+  }
+  function createXhtmlEl(doc, tag, css = "") {
+    const node = doc.createElementNS(XHTML_NS, tag);
+    if (css) node.style.cssText = css;
+    return node;
+  }
+  function createToolBtn(doc, text, l10nId, extraClass = "", iconKey) {
+    const btn = createXhtmlEl(doc, "button");
+    btn.type = "button";
+    btn.className = extraClass ? `ztf-pdf-btn ${extraClass}` : "ztf-pdf-btn";
+    if (l10nId) btn.setAttribute("data-l10n-id", l10nId);
+    const d = iconKey ? TOOL_SVG_PATHS[iconKey] : "";
+    if (d && typeof doc.createElementNS === "function") {
+      const svg = doc.createElementNS(SVG_NS2, "svg");
+      for (const [k, v] of [["viewBox", "0 0 16 16"], ["width", "12"], ["height", "12"], ["fill", "none"], ["stroke", "currentColor"], ["stroke-width", "1.6"], ["stroke-linecap", "round"], ["stroke-linejoin", "round"], ["class", "ztf-pdf-btn-svg"]]) {
+        svg.setAttribute(k, v);
+      }
+      const path = doc.createElementNS(SVG_NS2, "path");
+      path.setAttribute("d", d);
+      svg.append(path);
+      btn.append(svg);
+      if (text && iconKey === "openReader") {
+        const span = createXhtmlEl(doc, "span");
+        span.textContent = text;
+        btn.append(span);
+      }
+    } else if (text) btn.textContent = text;
+    return btn;
+  }
+  function applyStatusMessage(statusEl, l10nId) {
+    if (!l10nId) {
+      statusEl.style.display = "none";
+      statusEl.removeAttribute("data-l10n-id");
+      statusEl.textContent = "";
+      return;
+    }
+    statusEl.style.display = "block";
+    statusEl.setAttribute("data-l10n-id", l10nId);
+    statusEl.textContent = t(l10nId, STATUS_FALLBACKS[l10nId] || l10nId);
+  }
+  function logPreviewDebug(event, detail = {}) {
+    try {
+      if (getPref("debug")) Zotero.debug?.(`[TabFlow:PDFPreview] ${event} ${JSON.stringify(detail)}`);
+    } catch {
+    }
+  }
+  function isSectionEnabled(context, prefEnabled) {
+    const tabType = context.tabType;
+    return Boolean(prefEnabled && (!tabType || tabType === "library" || tabType === "reader"));
+  }
+  function ensureSectionConnected(body, root, savedSection, savedCollapsible) {
+    if (!body.contains(root)) body.replaceChildren(root);
+    let owner = body.closest?.("collapsible-section") || (body.parentElement?.localName === "collapsible-section" ? body.parentElement : null);
+    if (!owner) {
+      const doc = body.ownerDocument;
+      let hostSection = body.closest?.("item-pane-custom-section") || savedSection || null;
+      if ((!hostSection || hostSection.isConnected === false) && doc?.querySelectorAll) {
+        const candidates = Array.from(doc.querySelectorAll('item-pane-custom-section[data-pane*="tabflow-pdf-preview"]'));
+        hostSection = candidates.find((c) => c._body === body) || candidates.find((c) => !c.querySelector('[data-type="body"]')) || hostSection;
+      }
+      const liveCollapsible = hostSection?.querySelector?.("collapsible-section") || (savedCollapsible?.isConnected ? savedCollapsible : null);
+      if (liveCollapsible) {
+        const existingBody = liveCollapsible.querySelector?.('[data-type="body"]');
+        if (!existingBody) liveCollapsible.append(body);
+        else if (existingBody !== body) {
+          existingBody.replaceWith(body);
+          if (hostSection) hostSection._body = body;
+        }
+        owner = liveCollapsible;
+      }
+    }
+    if (!owner) return null;
+    owner.removeAttribute?.("empty");
+    if ("empty" in owner) owner.empty = false;
+    if (!owner.hasAttribute?.("data-tabflow-preview-ready")) {
+      owner.setAttribute?.("data-tabflow-preview-ready", "true");
+      owner.open = true;
+    }
+    owner.style?.setProperty?.("--open-height", "auto");
+    return owner;
+  }
+  function applyPreviewLayoutMode(body, root, savedSection, fullActive) {
+    root.setAttribute("data-layout-mode", fullActive ? "full" : "section");
+    const hostSection = body.closest?.("item-pane-custom-section") || savedSection;
+    const stack = hostSection?.parentElement;
+    if (!hostSection) return;
+    if (fullActive) {
+      hostSection.setAttribute("data-ztf-pdf-full-section", "true");
+      stack?.setAttribute("data-ztf-pdf-full-stack", "true");
+      for (const child of Array.from(stack?.parentElement?.children || [])) {
+        const tag = (child.localName || child.tagName || "").toLowerCase();
+        if (child !== stack && tag !== "item-pane-sidenav" && !child.querySelector?.("item-pane-sidenav")) {
+          child.setAttribute("data-ztf-pdf-full-hidden", "true");
+        }
+      }
+    } else {
+      hostSection.removeAttribute("data-ztf-pdf-full-section");
+      stack?.removeAttribute("data-ztf-pdf-full-stack");
+      body.ownerDocument?.querySelectorAll?.("[data-ztf-pdf-full-hidden]").forEach((el) => el.removeAttribute("data-ztf-pdf-full-hidden"));
+    }
+  }
+  function bindPreviewSidenavClick(doc, signal, onFullModeChange) {
+    if (typeof doc.addEventListener !== "function") return;
+    doc.addEventListener("click", (event) => {
+      if (event.button !== 0) return;
+      const btn = event.target?.closest?.("item-pane-sidenav .btn[data-pane]");
+      const paneID = btn?.getAttribute?.("data-pane") || "";
+      if (!btn || btn.hasAttribute?.("disabled")) return;
+      if (!paneID.includes("tabflow-pdf-preview")) {
+        onFullModeChange?.(false);
+        return;
+      }
+      if (getPref("pdfPreviewMode") === "full") onFullModeChange?.(true);
+      const sidenav = btn.closest?.("item-pane-sidenav");
+      const container = sidenav?.container;
+      const section = container?.getEnabledPane?.(paneID) || doc.querySelector?.(`item-pane-custom-section[data-pane="${paneID}"]`);
+      const collapsible = section?.querySelector?.("collapsible-section");
+      if (collapsible) {
+        collapsible.removeAttribute?.("empty");
+        collapsible.open = true;
+        collapsible.style?.setProperty?.("--open-height", "auto");
+      }
+      if (container?.scrollToPane) void container.scrollToPane(paneID, "smooth");
+    }, { capture: true, signal });
+  }
+  function openPageJumpInput(doc, pageLabel, currentPage, numPages, onCommit) {
+    if (numPages <= 1) return;
+    const input = createXhtmlEl(doc, "input");
+    input.type = "number";
+    input.className = "ztf-pdf-page-input";
+    input.min = "1";
+    input.max = String(numPages);
+    input.value = String(currentPage || 1);
+    let closed = false;
+    const finish = (commit) => {
+      if (closed) return;
+      closed = true;
+      const target = Number(input.value);
+      input.replaceWith?.(pageLabel);
+      if (commit && Number.isFinite(target) && target >= 1) onCommit(Math.round(target));
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault?.();
+        finish(true);
+      } else if (e.key === "Escape") {
+        e.preventDefault?.();
+        finish(false);
+      }
+    });
+    input.addEventListener("blur", () => finish(true));
+    pageLabel.replaceWith?.(input);
+    input.focus?.();
+    input.select?.();
+  }
+  function evictDistantPageCanvases(slots, currentPage, radius = 8) {
+    if (slots.length <= 14) return;
+    for (const slot of slots) {
+      if (slot.renderedZoom !== null && !slot.rendering && Math.abs(slot.pageNumber - currentPage) > radius) {
+        slot.canvas.width = 0;
+        slot.canvas.height = 0;
+        slot.renderedZoom = null;
+        slot.card.setAttribute("data-unrendered", "true");
+        if (slot.lastHeight > 0) slot.card.style.minBlockSize = `${slot.lastHeight}px`;
+      }
+    }
+  }
+
+  // src/ui/pdf-preview-section.ts
+  var MIN_ZOOM = 0.6;
+  var MAX_ZOOM = 2;
+  var ZOOM_STEP = 0.2;
+  var PdfPreviewSectionController = class {
+    sectionID = false;
+    prefObservers = [];
+    states = /* @__PURE__ */ new Map();
+    listeners = /* @__PURE__ */ new Map();
+    register(pluginID, rootURI) {
+      logPreviewDebug("register", { pluginID, rootURI, hasAPI: Boolean(Zotero.ItemPaneManager?.registerSection) });
+      if (this.sectionID || !Zotero.ItemPaneManager?.registerSection) return;
+      this.sectionID = Zotero.ItemPaneManager.registerSection({
+        paneID: "tabflow-pdf-preview",
+        pluginID,
+        header: { l10nID: "zotero-tabflow-pdf-preview-title", icon: `${rootURI}pdf-preview.svg` },
+        sidenav: { l10nID: "zotero-tabflow-pdf-preview-sidenav", icon: `${rootURI}pdf-preview-sidenav.svg`, orderable: true },
+        onInit: (props) => this.onInit(props),
+        onDestroy: ({ body }) => this.onDestroy(body),
+        onItemChange: (props) => this.renderSection(props),
+        onRender: (props) => this.renderSection(props),
+        onToggle: (props) => this.renderSection(props)
+      });
+      if (Zotero.Prefs?.registerObserver && !this.prefObservers.length) {
+        for (const key of ["pdfPreviewMode", "enablePdfPreviewSidenav", "pdfPreviewDefaultZoom", "pdfPreviewShowPageBadge"]) {
+          this.prefObservers.push(Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => {
+            invalidatePrefCache(key);
+            const isFull = getPref("pdfPreviewMode") === "full" && getPref("enablePdfPreviewSidenav");
+            const showBadge = getPref("pdfPreviewShowPageBadge");
+            const defaultZoom = Math.round(getPref("pdfPreviewDefaultZoom")) / 100;
+            for (const st of this.states.values()) {
+              st.fullActive = isFull;
+              st.root.setAttribute("data-show-badge", showBadge ? "true" : "false");
+              if (key === "pdfPreviewDefaultZoom") st.zoom = defaultZoom;
+              applyPreviewLayoutMode(st.body, st.root, st.customSection, isFull);
+              this.syncControls(st);
+              this.invalidateAndRenderVisible(st);
+            }
+          }, true));
+        }
+      }
+    }
+    onInit(props) {
+      const { body, item, tabType, setEnabled, setSectionSummary } = props;
+      const doc = props.doc || body?.ownerDocument;
+      const win = doc?.defaultView || Zotero.getMainWindow?.();
+      if (!win || !doc || !body) return;
+      try {
+        const customSection = body.closest?.("item-pane-custom-section") || null, collapsible = body.closest?.("collapsible-section") || null;
+        setEnabled?.(isSectionEnabled({ item, tabType }, getPref("enablePdfPreviewSidenav")));
+        win.MozXULElement?.insertFTLIfNeeded?.("zotero-tabflow.ftl");
+        ensurePreviewStyles(doc);
+        this.listeners.get(body)?.abort();
+        const controller = new win.AbortController();
+        this.listeners.set(body, controller);
+        body.textContent = "";
+        const root = createXhtmlEl(doc, "div");
+        root.className = "ztf-pdf-root";
+        const toolbar = createXhtmlEl(doc, "div");
+        toolbar.className = "ztf-pdf-toolbar";
+        const navGroup = createXhtmlEl(doc, "div");
+        navGroup.className = "ztf-pdf-btn-group";
+        const prevBtn = createToolBtn(doc, "‹", "zotero-tabflow-pdf-preview-prev", "", "prev");
+        const pageLabel = createXhtmlEl(doc, "span");
+        pageLabel.className = "ztf-pdf-page-label";
+        pageLabel.textContent = "0 / 0";
+        const nextBtn = createToolBtn(doc, "›", "zotero-tabflow-pdf-preview-next", "", "next");
+        navGroup.append(prevBtn, pageLabel, nextBtn);
+        const zoomGroup = createXhtmlEl(doc, "div");
+        zoomGroup.className = "ztf-pdf-btn-group";
+        const zoomOutBtn = createToolBtn(doc, "−", "zotero-tabflow-pdf-preview-zoom-out", "", "zoomOut");
+        const zoomLabel = createToolBtn(doc, "100%");
+        const zoomInBtn = createToolBtn(doc, "+", "zotero-tabflow-pdf-preview-zoom-in", "", "zoomIn");
+        const modeBtn = createToolBtn(doc, "", "zotero-tabflow-pdf-preview-toggle-mode", "", "toggleMode");
+        const openBtn = createToolBtn(doc, t("zotero-tabflow-pdf-preview-open-reader", "在阅读器中打开"), "zotero-tabflow-pdf-preview-open-reader", "ztf-pdf-open-btn", "openReader");
+        zoomGroup.append(zoomOutBtn, zoomLabel, zoomInBtn, modeBtn, openBtn);
+        const attSelect = createXhtmlEl(doc, "select", "display:none");
+        attSelect.className = "ztf-pdf-att-select";
+        toolbar.append(navGroup, zoomGroup, attSelect);
+        const statusEl = createXhtmlEl(doc, "div");
+        statusEl.className = "ztf-pdf-status";
+        const viewportEl = createXhtmlEl(doc, "div");
+        viewportEl.className = "ztf-pdf-viewport";
+        viewportEl.setAttribute("tabindex", "0");
+        root.append(toolbar, statusEl, viewportEl);
+        body.append(root);
+        const state = {
+          doc,
+          win,
+          body,
+          root,
+          customSection,
+          collapsible,
+          setSectionSummary,
+          item: null,
+          attachment: null,
+          attachments: [],
+          pdfDoc: null,
+          loading: false,
+          generation: 0,
+          fullActive: getPref("pdfPreviewMode") === "full",
+          zoom: Math.round(getPref("pdfPreviewDefaultZoom")) / 100,
+          currentPage: 0,
+          numPages: 0,
+          lastWidth: 0,
+          resizeTimer: null,
+          resizeObserver: null,
+          slots: [],
+          observer: null,
+          statusEl,
+          pageLabel,
+          zoomLabel,
+          prevBtn,
+          nextBtn,
+          openBtn,
+          attSelect,
+          viewportEl
+        };
+        root.setAttribute("data-show-badge", getPref("pdfPreviewShowPageBadge") ? "true" : "false");
+        this.states.set(body, state);
+        ensureSectionConnected(body, root, customSection, collapsible);
+        applyPreviewLayoutMode(body, root, customSection, state.fullActive);
+        bindPreviewSidenavClick(doc, controller.signal, (active) => {
+          state.fullActive = active;
+          applyPreviewLayoutMode(state.body, state.root, state.customSection, active);
+        });
+        this.bindToolbar(state, zoomOutBtn, zoomInBtn, modeBtn, controller.signal);
+        this.setupResizeObserver(state);
+        this.syncControls(state);
+        this.renderSection(props);
+      } catch (error) {
+        Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+    bindToolbar(state, zoomOutBtn, zoomInBtn, modeBtn, signal) {
+      const opts = { signal };
+      state.prevBtn.addEventListener("click", () => this.jumpToPage(state, state.currentPage - 1), opts);
+      state.nextBtn.addEventListener("click", () => this.jumpToPage(state, state.currentPage + 1), opts);
+      zoomOutBtn.addEventListener("click", () => this.setZoom(state, state.zoom - ZOOM_STEP), opts);
+      zoomInBtn.addEventListener("click", () => this.setZoom(state, state.zoom + ZOOM_STEP), opts);
+      state.zoomLabel.addEventListener("click", () => this.setZoom(state, 1), opts);
+      modeBtn.addEventListener("click", () => {
+        const next = getPref("pdfPreviewMode") === "full" ? "section" : "full";
+        setPref("pdfPreviewMode", next);
+        state.fullActive = next === "full";
+        applyPreviewLayoutMode(state.body, state.root, state.customSection, state.fullActive);
+        this.invalidateAndRenderVisible(state);
+      }, opts);
+      state.openBtn.addEventListener("click", () => state.attachment && void openPdfInReader(state.attachment, state.win, state.currentPage || 1), opts);
+      state.attSelect.addEventListener("change", () => {
+        const chosen = state.attachments.find((entry) => String(entry.id) === state.attSelect.value);
+        if (chosen && chosen.attachment !== state.attachment) void this.loadAttachmentDocument(state, chosen.attachment);
+      }, opts);
+      state.pageLabel.addEventListener("click", () => openPageJumpInput(state.doc, state.pageLabel, state.currentPage, state.numPages, (p) => this.jumpToPage(state, p)), opts);
+      state.viewportEl.addEventListener("scroll", () => this.updateCurrentPageFromScroll(state), opts);
+      state.viewportEl.addEventListener("dblclick", (event) => {
+        if (!state.attachment || !getPref("pdfPreviewDoubleClickOpen")) return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        const card = event.target?.closest?.("[data-page-number]");
+        void openPdfInReader(state.attachment, state.win, Number(card?.getAttribute?.("data-page-number")) || state.currentPage || 1);
+      }, opts);
+      state.viewportEl.addEventListener("keydown", (event) => {
+        if (!state.numPages) return;
+        const k = event.key;
+        if (k === "PageDown" || k === "ArrowRight") {
+          event.preventDefault?.();
+          this.jumpToPage(state, state.currentPage + 1);
+        } else if (k === "PageUp" || k === "ArrowLeft") {
+          event.preventDefault?.();
+          this.jumpToPage(state, state.currentPage - 1);
+        } else if (k === "Home" || k === "End") {
+          event.preventDefault?.();
+          this.jumpToPage(state, k === "Home" ? 1 : state.numPages);
+        } else if ((event.ctrlKey || event.metaKey) && k === "0") {
+          event.preventDefault?.();
+          this.setZoom(state, 1);
+        }
+      }, opts);
+      state.viewportEl.addEventListener("wheel", (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          this.setZoom(state, state.zoom + (e.deltaY < 0 ? 0.1 : -0.1));
+        }
+      }, opts);
+    }
+    setupResizeObserver(state) {
+      const RO = state.win.ResizeObserver;
+      if (!RO) return;
+      state.resizeObserver = new RO(() => {
+        const width = state.viewportEl.clientWidth || state.body.clientWidth || 0;
+        if (!width || !state.pdfDoc || Math.abs(width - state.lastWidth) < 8) return;
+        state.lastWidth = width;
+        if (state.resizeTimer !== null) state.win.clearTimeout(state.resizeTimer);
+        state.resizeTimer = state.win.setTimeout(() => {
+          state.resizeTimer = null;
+          this.invalidateAndRenderVisible(state);
+        }, 120);
+      });
+      state.resizeObserver.observe(state.viewportEl);
+    }
+    invalidateAndRenderVisible(state) {
+      for (const slot of state.slots) {
+        slot.cancelTask?.();
+        slot.renderedZoom = null;
+      }
+      const startIdx = Math.max(0, state.currentPage - 1);
+      for (let i = startIdx; i < Math.min(state.slots.length, startIdx + 2); i++) void this.renderSlot(state, state.slots[i], state.generation);
+    }
+    onDestroy(body) {
+      const state = this.states.get(body);
+      if (state) {
+        if (state.resizeTimer !== null) state.win.clearTimeout?.(state.resizeTimer);
+        state.resizeObserver?.disconnect();
+        applyPreviewLayoutMode(state.body, state.root, state.customSection, false);
+        this.disposeDocument(state, true);
+      }
+      this.states.delete(body);
+      this.listeners.get(body)?.abort();
+      this.listeners.delete(body);
+    }
+    renderSection({ body, item, tabType, setEnabled, setSectionSummary }) {
+      const enabled = isSectionEnabled({ item, tabType }, getPref("enablePdfPreviewSidenav"));
+      setEnabled?.(enabled);
+      let state = this.states.get(body);
+      if (!state) {
+        const doc = body?.ownerDocument;
+        if (!doc) return;
+        this.onInit({ doc, body, item, tabType, setEnabled, setSectionSummary });
+        state = this.states.get(body);
+        if (!state) return;
+      }
+      if (setSectionSummary) state.setSectionSummary = setSectionSummary;
+      ensureSectionConnected(state.body, state.root, state.customSection, state.collapsible);
+      if (!enabled) {
+        state.item = null;
+        applyPreviewLayoutMode(state.body, state.root, state.customSection, false);
+        this.disposeDocument(state, true);
+        applyStatusMessage(state.statusEl, "");
+        return;
+      }
+      applyPreviewLayoutMode(state.body, state.root, state.customSection, state.fullActive && getPref("pdfPreviewMode") === "full");
+      if (item && state.item === item && (state.pdfDoc || state.loading)) return;
+      state.item = item ?? null;
+      void this.loadItemPreview(state, state.item);
+    }
+    disposeDocument(state, clearAttachments = false) {
+      state.generation += 1;
+      state.loading = false;
+      state.observer?.disconnect();
+      state.observer = null;
+      for (const slot of state.slots) {
+        slot.cancelTask?.();
+        slot.canvas.width = 0;
+        slot.canvas.height = 0;
+      }
+      state.slots = [];
+      state.viewportEl.textContent = "";
+      state.currentPage = 0;
+      state.numPages = 0;
+      state.attachment = null;
+      if (clearAttachments) {
+        state.attachments = [];
+        state.attSelect.textContent = "";
+        state.attSelect.style.display = "none";
+      }
+      const oldDoc = state.pdfDoc;
+      state.pdfDoc = null;
+      if (oldDoc?.destroy) void Promise.resolve(oldDoc.destroy()).catch(() => {
+      });
+      this.syncControls(state);
+    }
+    syncControls(state) {
+      const hasDoc = state.numPages > 0;
+      const pageText = hasDoc ? `${state.currentPage} / ${state.numPages}` : "0 / 0";
+      state.pageLabel.textContent = pageText;
+      state.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
+      state.setSectionSummary?.(hasDoc ? pageText : "");
+      state.prevBtn.disabled = !hasDoc || state.currentPage <= 1;
+      state.nextBtn.disabled = !hasDoc || state.currentPage >= state.numPages;
+      state.openBtn.disabled = !state.attachment;
+    }
+    async loadItemPreview(state, item) {
+      this.disposeDocument(state, true);
+      const gen = state.generation;
+      if (!item) {
+        applyStatusMessage(state.statusEl, "zotero-tabflow-pdf-preview-unavailable");
+        return;
+      }
+      state.loading = true;
+      applyStatusMessage(state.statusEl, "zotero-tabflow-pdf-preview-loading");
+      const entries = await resolveAllPdfAttachments(item);
+      if (state.generation !== gen) return;
+      state.attachments = entries;
+      if (entries.length > 1) {
+        state.attSelect.textContent = "";
+        entries.forEach((entry, idx) => {
+          const opt = createXhtmlEl(state.doc, "option");
+          opt.value = String(entry.id);
+          opt.textContent = `${idx + 1}. ${entry.title}`;
+          state.attSelect.append(opt);
+        });
+        state.attSelect.style.display = "block";
+      } else state.attSelect.style.display = "none";
+      if (!entries.length) {
+        state.loading = false;
+        ensureSectionConnected(state.body, state.root, state.customSection, state.collapsible);
+        applyStatusMessage(state.statusEl, "zotero-tabflow-pdf-preview-unavailable");
+        return;
+      }
+      await this.loadAttachmentDocument(state, entries[0].attachment);
+    }
+    async loadAttachmentDocument(state, att) {
+      this.disposeDocument(state, false);
+      const gen = state.generation;
+      state.loading = true;
+      state.attachment = att;
+      this.syncControls(state);
+      applyStatusMessage(state.statusEl, "zotero-tabflow-pdf-preview-loading");
+      try {
+        const filePath = await resolveAttachmentPath(att);
+        if (state.generation !== gen) return;
+        if (!filePath) {
+          state.loading = false;
+          applyStatusMessage(state.statusEl, "zotero-tabflow-pdf-preview-missing-file");
+          return;
+        }
+        const pdfDoc = await openPdfDocumentFromFile(filePath, state.doc);
+        if (state.generation !== gen) {
+          void Promise.resolve(pdfDoc.destroy?.()).catch(() => {
+          });
+          return;
+        }
+        state.loading = false;
+        state.pdfDoc = pdfDoc;
+        state.numPages = Math.max(0, pdfDoc.numPages || 0);
+        state.currentPage = state.numPages > 0 ? 1 : 0;
+        ensureSectionConnected(state.body, state.root, state.customSection, state.collapsible);
+        if (!state.numPages) {
+          applyStatusMessage(state.statusEl, "zotero-tabflow-pdf-preview-unavailable");
+          return;
+        }
+        applyStatusMessage(state.statusEl, "");
+        this.buildPageSlots(state, gen);
+        this.syncControls(state);
+      } catch (error) {
+        if (state.generation !== gen) return;
+        state.loading = false;
+        Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+        applyStatusMessage(state.statusEl, "zotero-tabflow-pdf-preview-error");
+      }
+    }
+    buildPageSlots(state, gen) {
+      state.viewportEl.textContent = "";
+      state.slots = [];
+      const frag = state.doc.createDocumentFragment();
+      for (let p = 1; p <= state.numPages; p++) {
+        const card = createXhtmlEl(state.doc, "div");
+        card.className = "ztf-pdf-page-card";
+        card.setAttribute("data-unrendered", "true");
+        card.setAttribute("data-page-number", String(p));
+        const canvas = createXhtmlEl(state.doc, "canvas");
+        canvas.className = "ztf-pdf-canvas";
+        const badge = createXhtmlEl(state.doc, "span");
+        badge.className = "ztf-pdf-page-badge";
+        badge.textContent = String(p);
+        card.addEventListener("dblclick", (e) => {
+          if (state.attachment && getPref("pdfPreviewDoubleClickOpen")) {
+            e.preventDefault?.();
+            e.stopPropagation?.();
+            void openPdfInReader(state.attachment, state.win, p);
+          }
+        });
+        card.append(canvas, badge);
+        frag.append(card);
+        state.slots.push({ pageNumber: p, card, canvas, renderedZoom: null, rendering: false, lastHeight: 0 });
+      }
+      state.viewportEl.append(frag);
+      const Observer = state.win.IntersectionObserver;
+      if (Observer) {
+        state.observer = new Observer((entries) => {
+          if (state.generation !== gen) return;
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const slot = state.slots.find((s) => s.card === entry.target);
+            if (slot) void this.renderSlot(state, slot, gen);
+          }
+        }, { root: state.viewportEl, rootMargin: "320px 0px", threshold: 0.01 });
+        for (const slot of state.slots) state.observer.observe(slot.card);
+      }
+      void this.renderSlot(state, state.slots[0], gen);
+      if (state.slots[1]) void this.renderSlot(state, state.slots[1], gen);
+    }
+    async renderSlot(state, slot, gen) {
+      if (!state.pdfDoc || state.generation !== gen || slot.rendering || slot.renderedZoom === state.zoom) return;
+      slot.rendering = true;
+      try {
+        const w = Math.max(180, (state.viewportEl.clientWidth || state.body.clientWidth || 260) - 2);
+        state.lastWidth = state.viewportEl.clientWidth || state.body.clientWidth || state.lastWidth;
+        const m = await renderPageToCanvas(state.pdfDoc, slot.pageNumber, slot.canvas, w, state.zoom, state.win.devicePixelRatio || 1, () => state.generation !== gen, (c) => {
+          slot.cancelTask = c;
+        });
+        if (state.generation === gen && m.height > 0) {
+          slot.lastHeight = m.height;
+          slot.card.removeAttribute("data-unrendered");
+          slot.card.style.minBlockSize = "0";
+          slot.renderedZoom = state.zoom;
+        }
+      } catch (error) {
+        if (state.generation === gen) Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+      } finally {
+        slot.rendering = false;
+        slot.cancelTask = void 0;
+      }
+    }
+    jumpToPage(state, pageNumber) {
+      if (!state.numPages) return;
+      const target = Math.max(1, Math.min(state.numPages, pageNumber));
+      state.currentPage = target;
+      this.syncControls(state);
+      const slot = state.slots[target - 1];
+      if (!slot) return;
+      state.viewportEl.scrollTop = Math.max(0, slot.card.offsetTop - (state.slots[0]?.card.offsetTop || 0));
+      void this.renderSlot(state, slot, state.generation);
+      evictDistantPageCanvases(state.slots, state.currentPage);
+    }
+    setZoom(state, nextZoom) {
+      const clamped = Math.round(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom)) * 100) / 100;
+      if (clamped === state.zoom) return;
+      state.zoom = clamped;
+      this.syncControls(state);
+      this.invalidateAndRenderVisible(state);
+    }
+    updateCurrentPageFromScroll(state) {
+      if (!state.slots.length) return;
+      const top = state.viewportEl.scrollTop + (state.slots[0]?.card.offsetTop || 0);
+      let best = 1, bestDist = Infinity;
+      for (const slot of state.slots) {
+        const dist = Math.abs(slot.card.offsetTop - top);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = slot.pageNumber;
+        }
+      }
+      if (best !== state.currentPage) {
+        state.currentPage = best;
+        this.syncControls(state);
+        evictDistantPageCanvases(state.slots, state.currentPage);
+      }
+    }
+    unregister() {
+      for (const obs of this.prefObservers.splice(0)) Zotero.Prefs?.unregisterObserver?.(obs);
+      for (const state of this.states.values()) {
+        if (state.resizeTimer !== null) state.win.clearTimeout?.(state.resizeTimer);
+        state.resizeObserver?.disconnect();
+        applyPreviewLayoutMode(state.body, state.root, state.customSection, false);
+        this.disposeDocument(state, true);
+        removePreviewStyles(state.doc);
+      }
+      for (const controller of this.listeners.values()) controller.abort();
+      this.listeners.clear();
+      this.states.clear();
+      if (this.sectionID) {
+        Zotero.ItemPaneManager?.unregisterSection?.(this.sectionID);
+        this.sectionID = false;
+      }
     }
   };
 
@@ -5537,6 +6554,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
     store = new TabFlowStore();
     windows = /* @__PURE__ */ new Map();
     pdfFolderSection = new PdfFolderSectionController();
+    pdfPreviewSection = new PdfPreviewSectionController();
     prefObserverIDs = [];
     nextRollingAt = 0;
     unsubscribeStore = null;
@@ -5552,6 +6570,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       this.nextRollingAt = Date.now() + 3e5;
       if (getPref("debug")) Zotero.debug("[TabFlow] Workspace state loaded");
       this.pdfFolderSection.register(this.id, this.rootURI);
+      this.pdfPreviewSection.register(this.id, this.rootURI);
       this.unsubscribeStore = this.store.subscribe(() => this.refreshAll());
       this.prefObserverIDs = Object.keys(DEFAULT_PREFS).map(
         (key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => {
@@ -5588,6 +6607,7 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
       enablePrefCache(false);
       resetI18nCache();
       this.pdfFolderSection.unregister();
+      this.pdfPreviewSection.unregister();
       for (const id of this.prefObserverIDs) Zotero.Prefs.unregisterObserver(id);
       this.prefObserverIDs = [];
       this.unsubscribeStore?.();

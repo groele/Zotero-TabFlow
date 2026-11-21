@@ -34,6 +34,8 @@ function updateDependencies(doc: Document): void {
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-autoSleepMinutes'), !getPref('enableTabSleep'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-staleSuggestDays'), !getPref('enableStaleSuggestions'));
 	setSubtreeDisabled(doc.getElementById('tabflow-sub-tabContextActions'), !getPref('enableTabContextMenu'));
+	setSubtreeDisabled(doc.getElementById('tabflow-sub-pdfPreviewSettings'), !getPref('enablePdfPreviewSidenav'));
+	setSubtreeDisabled(doc.getElementById('tabflow-sub-pdfFolderSettings'), !getPref('enablePdfFolderSidenav'));
 	scheduleMenulistSync(doc);
 }
 
@@ -66,7 +68,7 @@ const TabFlowPreferences = {
 			this.observerIDs = [
 				'enableHorizontalGroups', 'horizontalTabCompactMode', 'enableVerticalSidebar', 'enablePinnedTabs',
 				'newTabMode', 'enableTabRemarks', 'enableSessions',
-				'enableTabSleep', 'enableStaleSuggestions', 'enableTabContextMenu',
+				'enableTabSleep', 'enableStaleSuggestions', 'enableTabContextMenu', 'enablePdfPreviewSidenav', 'pdfPreviewMode', 'enablePdfFolderSidenav', 'pdfFolderOpenMode',
 				'multiCollectionStrategy', 'remarkDisplayMode', 'verticalTabTitleMode', 'verticalTabSubtitleMode',
 			].map((key) => Zotero.Prefs.registerObserver(PREF_PREFIX + key, () => updateDependencies(doc), true));
 			(win || window).addEventListener('unload', () => {
