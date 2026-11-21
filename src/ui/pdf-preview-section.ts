@@ -1,6 +1,6 @@
 import { t } from '../core/i18n.ts';
 import { PREF_PREFIX, getPref, invalidatePrefCache, setPref } from '../core/prefs.ts';
-import { resolveCompareItem } from '../services/pdf-compare.ts';
+import { pickCompareAttachment, resolveSameItemPdfContext } from '../services/pdf-compare.ts';
 import {
 	openPdfDocumentFromFile, openPdfInReader, renderPageToCanvas,
 	resolveAllPdfAttachments, resolveAttachmentPath,
@@ -98,12 +98,12 @@ export class PdfPreviewSectionController {
 			const openBtn = toolBtn(doc, t('zotero-tabflow-pdf-preview-open-reader', '在阅读器中打开'), 'zotero-tabflow-pdf-preview-open-reader', 'ztf-pdf-open-btn', 'openReader');
 			zoomGroup.append(zoomOutBtn, zoomLabel, zoomInBtn, modeBtn, openBtn);
 			const attSelect = el(doc, 'select', 'display:none'); attSelect.className = 'ztf-pdf-att-select';
-			const compare: CompareState = { mode: 'follow', pickedAttachmentID: null, tabType: tabType || 'library' };
+			const compare: CompareState = { mode: 'sibling', pickedAttachmentID: null, currentAttachmentID: 0, tabType: tabType || 'library' };
 			const compareUI = createCompareBar(doc, controller.signal, () => state.compare, (nextMode, nextPickedID) => {
-				const prevMode = state.compare.mode; state.compare.mode = nextMode; state.compare.pickedAttachmentID = nextPickedID;
-				syncCompareBar(compareUI, win, state.compare);
-				if ((nextMode === 'self' || (nextMode === 'follow' && prevMode === 'self')) && state.pdfDoc) return;
-				void this.loadItemPreview(state, state.item);
+				state.compare.mode = nextMode; state.compare.pickedAttachmentID = nextPickedID;
+				const chosen = pickCompareAttachment({ currentAttachmentID: state.compare.currentAttachmentID, entries: state.attachments }, nextMode, nextPickedID);
+				syncCompareBar(compareUI, state.compare, state.attachments, chosen?.id || 0);
+				if (chosen && chosen.attachment !== state.attachment) void this.loadAttachmentDocument(state, chosen.attachment);
 			});
 			toolbar.append(navGroup, zoomGroup, attSelect, compareUI.bar);
 			const statusEl = el(doc, 'div'); statusEl.className = 'ztf-pdf-status';
@@ -210,12 +210,12 @@ export class PdfPreviewSectionController {
 			this.disposeDocument(state, true); applyStatusMessage(state.statusEl, ''); return;
 		}
 		applyPreviewLayoutMode(state.body, state.root, state.customSection, state.fullActive && getPref('pdfPreviewMode') === 'full');
-		state.compare.tabType = tabType || 'library';
-		if (state.compare.tabType !== 'reader') { state.compare.mode = 'follow'; state.compare.pickedAttachmentID = null; }
-		syncCompareBar(state.compareUI, state.win, state.compare);
-		const keepCompare = state.compare.tabType === 'reader' && (state.compare.mode === 'pick' || state.compare.mode === 'self');
-		if (keepCompare && (state.pdfDoc || state.loading)) return;
-		if (item && state.item === item && (state.pdfDoc || state.loading) && state.compare.mode === 'follow') return;
+		const nextTabType = tabType || 'library';
+		const itemChanged = item !== state.item || nextTabType !== state.compare.tabType;
+		state.compare.tabType = nextTabType;
+		if (!itemChanged && item && (state.pdfDoc || state.loading)) return;
+		state.compare.mode = 'sibling'; state.compare.pickedAttachmentID = null; state.compare.currentAttachmentID = 0;
+		syncCompareBar(state.compareUI, state.compare, [], 0);
 		state.item = item ?? null; void this.loadItemPreview(state, state.item);
 	}
 
@@ -244,25 +244,24 @@ export class PdfPreviewSectionController {
 	private async loadItemPreview(state: PreviewState, item: any): Promise<void> {
 		this.disposeDocument(state, true);
 		const gen = state.generation;
-		let targetItem = item;
-		if (state.compare.tabType === 'reader' && state.compare.mode !== 'follow') {
-			state.loading = true; applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-loading');
-			const resolved = await resolveCompareItem(state.win, state.compare.mode, state.compare.pickedAttachmentID, item);
-			if (state.generation !== gen) return;
-			targetItem = resolved.item;
-		}
-		if (!targetItem) { state.loading = false; applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return; }
+		if (!item) { applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return; }
 		state.loading = true; applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-loading');
-		const entries = await resolveAllPdfAttachments(targetItem);
+		const isReader = state.compare.tabType === 'reader';
+		const ctx = isReader ? await resolveSameItemPdfContext(item) : { currentAttachmentID: 0, entries: await resolveAllPdfAttachments(item) };
 		if (state.generation !== gen) return;
-		state.attachments = entries;
-		if (entries.length > 1) {
+		const entries = ctx.entries;
+		state.attachments = entries; state.compare.currentAttachmentID = ctx.currentAttachmentID;
+		const chosen = isReader && entries.length > 1
+			? pickCompareAttachment(ctx, state.compare.mode, state.compare.pickedAttachmentID)
+			: entries[0] ?? null;
+		syncCompareBar(state.compareUI, state.compare, entries, chosen?.id || 0);
+		if (!isReader && entries.length > 1) {
 			state.attSelect.textContent = '';
 			entries.forEach((entry, idx) => { const opt = el(state.doc, 'option'); opt.value = String(entry.id); opt.textContent = `${idx + 1}. ${entry.title}`; state.attSelect.append(opt); });
 			state.attSelect.style.display = 'block';
 		} else state.attSelect.style.display = 'none';
-		if (!entries.length) { state.loading = false; ensureSectionConnected(state.body, state.root, state.customSection, state.collapsible); applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return; }
-		await this.loadAttachmentDocument(state, entries[0].attachment);
+		if (!chosen) { state.loading = false; ensureSectionConnected(state.body, state.root, state.customSection, state.collapsible); applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return; }
+		await this.loadAttachmentDocument(state, chosen.attachment);
 	}
 	private async loadAttachmentDocument(state: PreviewState, att: any): Promise<void> {
 		this.disposeDocument(state, false); const gen = state.generation;

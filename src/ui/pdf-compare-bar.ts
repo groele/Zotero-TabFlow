@@ -1,30 +1,19 @@
 import { t } from '../core/i18n.ts';
-import {
-	collectOpenReaderTabs, getAdjacentReaderTab, type CompareMode,
-} from '../services/pdf-compare.ts';
+import type { CompareMode } from '../services/pdf-compare.ts';
+import type { PdfAttachmentEntry } from '../services/pdf-preview-renderer.ts';
 import { createXhtmlEl as el } from './item-pane-section-compat.ts';
 
 export interface CompareBarUI {
 	bar: HTMLDivElement;
 	selfBtn: HTMLButtonElement;
-	leftBtn: HTMLButtonElement;
-	rightBtn: HTMLButtonElement;
 	selectEl: HTMLSelectElement;
 }
 
 export interface CompareState {
 	mode: CompareMode;
 	pickedAttachmentID: number | null;
+	currentAttachmentID: number;
 	tabType: string;
-}
-
-function makeCompareBtn(doc: Document, text: string, tipKey: string, tipFallback: string): HTMLButtonElement {
-	const btn = el(doc, 'button');
-	btn.type = 'button';
-	btn.className = 'ztf-pdf-btn ztf-pdf-compare-btn';
-	btn.textContent = text;
-	btn.title = t(tipKey, tipFallback);
-	return btn;
 }
 
 export function createCompareBar(
@@ -37,78 +26,55 @@ export function createCompareBar(
 	bar.className = 'ztf-pdf-compare-bar';
 	bar.style.display = 'none';
 
-	const selfBtn = makeCompareBtn(
-		doc,
-		t('zotero-tabflow-pdf-compare-self', '自身'),
-		'zotero-tabflow-pdf-compare-self-tip',
-		'自身对照：锁定当前文献独立翻页，方便核对附录或公式',
-	);
-	const leftBtn = makeCompareBtn(
-		doc,
-		`← ${t('zotero-tabflow-pdf-compare-left', '左邻')}`,
-		'zotero-tabflow-pdf-compare-left-tip',
-		'与左侧相邻标签页的 PDF 对照阅读',
-	);
-	const rightBtn = makeCompareBtn(
-		doc,
-		`${t('zotero-tabflow-pdf-compare-right', '右邻')} →`,
-		'zotero-tabflow-pdf-compare-right-tip',
-		'与右侧相邻标签页的 PDF 对照阅读',
-	);
+	const selfBtn = el(doc, 'button');
+	selfBtn.type = 'button';
+	selfBtn.className = 'ztf-pdf-btn ztf-pdf-compare-btn';
+	selfBtn.textContent = t('zotero-tabflow-pdf-compare-self', '自身');
+	selfBtn.title = t('zotero-tabflow-pdf-compare-self-tip', '自身对照：锁定当前文献独立翻页，方便核对附录或公式');
 
 	const selectEl = el(doc, 'select');
 	selectEl.className = 'ztf-pdf-compare-select';
-	selectEl.title = t('zotero-tabflow-pdf-compare-pick-tip', '选择其他已打开的文献进行并排对照');
+	selectEl.title = t('zotero-tabflow-pdf-compare-pick-tip', '切换同条目下的其他 PDF 附件（如支撑材料）进行并排对照');
 
-	const toggle = (target: 'self' | 'left' | 'right') => {
+	selfBtn.addEventListener('click', () => {
 		const cur = getState();
-		onChange(cur.mode === target ? 'follow' : target, null);
-	};
-	selfBtn.addEventListener('click', () => toggle('self'), { signal });
-	leftBtn.addEventListener('click', () => toggle('left'), { signal });
-	rightBtn.addEventListener('click', () => toggle('right'), { signal });
-	selectEl.addEventListener('change', () => {
-		const val = Number(selectEl.value || 0);
-		if (!val) onChange('follow', null);
-		else onChange('pick', val);
+		onChange(cur.mode === 'self' ? 'sibling' : 'self', null);
 	}, { signal });
 
-	bar.append(selfBtn, leftBtn, rightBtn, selectEl);
-	return { bar, selfBtn, leftBtn, rightBtn, selectEl };
+	selectEl.addEventListener('change', () => {
+		const val = Number(selectEl.value || 0);
+		if (!val) return;
+		const cur = getState();
+		onChange(val === cur.currentAttachmentID ? 'self' : 'sibling', val);
+	}, { signal });
+
+	bar.append(selfBtn, selectEl);
+	return { bar, selfBtn, selectEl };
 }
 
-export function syncCompareBar(ui: CompareBarUI, win: Window, st: CompareState): void {
-	const isReader = st.tabType === 'reader';
-	ui.bar.style.display = isReader ? 'flex' : 'none';
-	if (!isReader) return;
+export function syncCompareBar(
+	ui: CompareBarUI,
+	st: CompareState,
+	entries: readonly PdfAttachmentEntry[],
+	activeAttachmentID: number,
+): void {
+	const visible = st.tabType === 'reader' && entries.length > 1;
+	ui.bar.style.display = visible ? 'flex' : 'none';
+	if (!visible) return;
 
-	const setActive = (btn: HTMLButtonElement, active: boolean) => {
-		if (active) btn.setAttribute('data-active', 'true');
-		else btn.removeAttribute('data-active');
-	};
-	setActive(ui.selfBtn, st.mode === 'self');
-	setActive(ui.leftBtn, st.mode === 'left');
-	setActive(ui.rightBtn, st.mode === 'right');
-
-	ui.leftBtn.disabled = !getAdjacentReaderTab(win, 'left');
-	ui.rightBtn.disabled = !getAdjacentReaderTab(win, 'right');
+	const isSelf = st.mode === 'self' || (st.currentAttachmentID > 0 && activeAttachmentID === st.currentAttachmentID);
+	if (isSelf) ui.selfBtn.setAttribute('data-active', 'true');
+	else ui.selfBtn.removeAttribute('data-active');
 
 	const doc = ui.bar.ownerDocument;
 	if (!doc) return;
-	const readers = collectOpenReaderTabs(win);
 	ui.selectEl.textContent = '';
-	const placeholder = el(doc, 'option');
-	placeholder.value = '';
-	placeholder.textContent = st.mode === 'follow'
-		? t('zotero-tabflow-pdf-compare-pick', '选择对照文献…')
-		: t('zotero-tabflow-pdf-compare-reset', '恢复跟随当前标签');
-	ui.selectEl.append(placeholder);
-
-	for (const r of readers) {
+	entries.forEach((entry, idx) => {
 		const opt = el(doc, 'option');
-		opt.value = String(r.attachmentID);
-		opt.textContent = r.isSelected ? `● ${r.title}` : r.title;
+		opt.value = String(entry.id);
+		const isCurrent = st.currentAttachmentID > 0 && entry.id === st.currentAttachmentID;
+		opt.textContent = isCurrent ? `● ${idx + 1}. ${entry.title}` : `${idx + 1}. ${entry.title}`;
 		ui.selectEl.append(opt);
-	}
-	ui.selectEl.value = st.mode === 'pick' && st.pickedAttachmentID ? String(st.pickedAttachmentID) : '';
+	});
+	if (activeAttachmentID) ui.selectEl.value = String(activeAttachmentID);
 }

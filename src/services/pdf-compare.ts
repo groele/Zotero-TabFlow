@@ -1,73 +1,64 @@
-export type CompareMode = 'follow' | 'self' | 'left' | 'right' | 'pick';
+import { resolveAllPdfAttachments, type PdfAttachmentEntry } from './pdf-preview-renderer.ts';
 
-export interface OpenReaderTab {
-	tabID: string;
-	attachmentID: number;
-	title: string;
-	isSelected: boolean;
+export type CompareMode = 'sibling' | 'self';
+
+export interface SameItemPdfContext {
+	currentAttachmentID: number;
+	entries: PdfAttachmentEntry[];
 }
 
-export interface CompareTargetResult {
-	item: any | null;
-	label: string;
+function isAttachmentLike(item: any): boolean {
+	if (!item) return false;
+	if (typeof item.isAttachment === 'function') return Boolean(item.isAttachment());
+	if (typeof item.isPDFAttachment === 'function') return Boolean(item.isPDFAttachment());
+	return item.itemType === 'attachment';
 }
 
-export function collectOpenReaderTabs(win: Window): OpenReaderTab[] {
-	const tabsApi = (win as any).Zotero_Tabs;
-	const rawTabs: any[] = Array.isArray(tabsApi?._tabs) ? tabsApi._tabs : [];
-	const selectedID = String(tabsApi?.selectedID || '');
-	const result: OpenReaderTab[] = [];
-	for (const tab of rawTabs) {
-		if (!tab || tab.type !== 'reader') continue;
-		const attachmentID = Number(tab.data?.itemID || 0);
-		if (!attachmentID) continue;
-		result.push({
-			tabID: String(tab.id || ''),
-			attachmentID,
-			title: String(tab.title || '').trim() || `#${attachmentID}`,
-			isSelected: String(tab.id || '') === selectedID,
-		});
-	}
-	return result;
-}
-
-export function getAdjacentReaderTab(win: Window, direction: 'left' | 'right'): OpenReaderTab | null {
-	const readers = collectOpenReaderTabs(win);
-	if (readers.length < 2) return null;
-	const idx = readers.findIndex((r) => r.isSelected);
-	if (idx < 0) return null;
-	const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
-	return targetIdx >= 0 && targetIdx < readers.length ? readers[targetIdx] : null;
-}
-
-export async function resolveCompareItem(
-	win: Window,
-	mode: CompareMode,
-	pickedAttachmentID: number | null,
-	fallbackItem: any | null,
-): Promise<CompareTargetResult> {
-	if (mode === 'follow' || mode === 'self') {
-		return { item: fallbackItem, label: '' };
-	}
-	let targetTab: OpenReaderTab | null = null;
-	if (mode === 'left' || mode === 'right') {
-		targetTab = getAdjacentReaderTab(win, mode);
-	} else if (mode === 'pick' && pickedAttachmentID) {
-		const readers = collectOpenReaderTabs(win);
-		targetTab = readers.find((r) => r.attachmentID === pickedAttachmentID) || {
-			tabID: '',
-			attachmentID: pickedAttachmentID,
-			title: `#${pickedAttachmentID}`,
-			isSelected: false,
-		};
-	}
-	if (!targetTab) return { item: null, label: '' };
+async function resolveParentItem(item: any): Promise<any> {
+	if (!item || !isAttachmentLike(item)) return item;
+	if (item.parentItem) return item.parentItem;
+	const parentID = Number(item.parentID || item.parentItemID || 0);
+	if (!parentID) return item;
 	try {
-		const item = Zotero.Items?.getAsync
-			? await Zotero.Items.getAsync(targetTab.attachmentID)
-			: Zotero.Items?.get?.(targetTab.attachmentID) ?? null;
-		return { item: item ?? null, label: targetTab.title };
+		const parent = Zotero.Items?.getAsync
+			? await Zotero.Items.getAsync(parentID)
+			: Zotero.Items?.get?.(parentID);
+		return parent || item;
 	} catch {
-		return { item: null, label: targetTab.title };
+		return item;
 	}
+}
+
+export async function resolveSameItemPdfContext(item: any): Promise<SameItemPdfContext> {
+	if (!item || item.deleted || item.isTrashed?.()) {
+		return { currentAttachmentID: 0, entries: [] };
+	}
+	const currentAttachmentID = isAttachmentLike(item) ? (Number(item.id) || 0) : 0;
+	const container = await resolveParentItem(item);
+	const entries = await resolveAllPdfAttachments(container);
+	if (!entries.length && isAttachmentLike(item)) {
+		const fallback = await resolveAllPdfAttachments(item);
+		return { currentAttachmentID, entries: fallback };
+	}
+	return { currentAttachmentID, entries };
+}
+
+export function pickCompareAttachment(
+	ctx: SameItemPdfContext,
+	mode: CompareMode,
+	explicitAttachmentID: number | null,
+): PdfAttachmentEntry | null {
+	if (!ctx.entries.length) return null;
+	if (ctx.entries.length === 1) return ctx.entries[0];
+	if (explicitAttachmentID) {
+		const exact = ctx.entries.find((e) => e.id === explicitAttachmentID);
+		if (exact) return exact;
+	}
+	if (mode === 'self' && ctx.currentAttachmentID) {
+		return ctx.entries.find((e) => e.id === ctx.currentAttachmentID) ?? ctx.entries[0];
+	}
+	if (ctx.currentAttachmentID) {
+		return ctx.entries.find((e) => e.id !== ctx.currentAttachmentID) ?? ctx.entries[0];
+	}
+	return ctx.entries[0];
 }

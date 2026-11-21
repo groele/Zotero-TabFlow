@@ -1,43 +1,60 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { collectOpenReaderTabs, getAdjacentReaderTab, resolveCompareItem } = require('../src/services/pdf-compare.ts');
+const { pickCompareAttachment, resolveSameItemPdfContext } = require('../src/services/pdf-compare.ts');
 const { ActivityTrackerService, formatReadingProgress } = require('../src/services/activity-tracker.ts');
 const { TabFlowStore } = require('../src/core/store.ts');
 
-test('pdf-compare resolves adjacent left/right reader tabs and picked reader attachment', async () => {
-	const items = new Map([
-		[101, { id: 101, title: 'Paper A' }],
-		[102, { id: 102, title: 'Paper B' }],
-		[103, { id: 103, title: 'Paper C' }],
-	]);
+test('pdf-compare restricts comparison to sibling PDFs under the same parent item', async () => {
+	const mainPdf = {
+		id: 201,
+		itemType: 'attachment',
+		isAttachment: () => true,
+		isPDFAttachment: () => true,
+		attachmentContentType: 'application/pdf',
+		getField: () => 'Main Article.pdf',
+	};
+	const siPdf = {
+		id: 202,
+		itemType: 'attachment',
+		isAttachment: () => true,
+		isPDFAttachment: () => true,
+		attachmentContentType: 'application/pdf',
+		getField: () => 'Supporting Information.pdf',
+	};
+	const parentItem = {
+		id: 100,
+		isRegularItem: () => true,
+		getAttachments: () => [201, 202],
+	};
+	mainPdf.parentItem = parentItem;
+	siPdf.parentItem = parentItem;
+
+	const singlePdf = {
+		id: 301,
+		itemType: 'attachment',
+		isAttachment: () => true,
+		isPDFAttachment: () => true,
+		attachmentContentType: 'application/pdf',
+		getField: () => 'Solo Paper.pdf',
+		parentItem: { id: 300, isRegularItem: () => true, getAttachments: () => [301] },
+	};
+
+	const attMap = new Map([[201, mainPdf], [202, siPdf], [301, singlePdf]]);
 	globalThis.Zotero = {
-		Items: { getAsync: async (id) => items.get(id) ?? null },
-	};
-	const win = {
-		Zotero_Tabs: {
-			selectedID: 't2',
-			_tabs: [
-				{ id: 'lib', type: 'library', title: 'My Library', data: {} },
-				{ id: 't1', type: 'reader', title: 'Paper A', data: { itemID: 101 } },
-				{ id: 't2', type: 'reader', title: 'Paper B', data: { itemID: 102 } },
-				{ id: 't3', type: 'reader', title: 'Paper C', data: { itemID: 103 } },
-			],
-		},
+		Items: { getAsync: async (ids) => (Array.isArray(ids) ? ids.map((id) => attMap.get(id)).filter(Boolean) : attMap.get(ids) ?? null) },
 	};
 
-	const readers = collectOpenReaderTabs(win);
-	assert.equal(readers.length, 3);
-	assert.equal(readers[1].isSelected, true);
-	assert.equal(getAdjacentReaderTab(win, 'left')?.attachmentID, 101);
-	assert.equal(getAdjacentReaderTab(win, 'right')?.attachmentID, 103);
+	const ctx = await resolveSameItemPdfContext(mainPdf);
+	assert.equal(ctx.currentAttachmentID, 201);
+	assert.equal(ctx.entries.length, 2);
+	assert.equal(pickCompareAttachment(ctx, 'sibling', null)?.id, 202);
+	assert.equal(pickCompareAttachment(ctx, 'self', null)?.id, 201);
+	assert.equal(pickCompareAttachment(ctx, 'sibling', 201)?.id, 201);
 
-	const leftRes = await resolveCompareItem(win, 'left', null, items.get(102));
-	assert.equal(leftRes.item?.id, 101);
-	const pickRes = await resolveCompareItem(win, 'pick', 103, items.get(102));
-	assert.equal(pickRes.item?.id, 103);
-	const selfRes = await resolveCompareItem(win, 'self', null, items.get(102));
-	assert.equal(selfRes.item?.id, 102);
+	const soloCtx = await resolveSameItemPdfContext(singlePdf);
+	assert.equal(soloCtx.entries.length, 1);
+	assert.equal(pickCompareAttachment(soloCtx, 'sibling', null)?.id, 301);
 });
 
 test('ActivityTrackerService.trackReadingProgress accumulates foreground reader seconds and page progress', () => {
