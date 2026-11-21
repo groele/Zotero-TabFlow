@@ -256,6 +256,8 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
 .ztf-batch-controls :disabled { opacity: .55; }
 .ztf-batch-target { display: flex; align-items: center; flex: none; cursor: pointer; }
 .ztf-batch-check { margin: 0; accent-color: var(--ztf-accent); }
+.ztf-sb-progress { height: 2px; width: 100%; border-radius: 1px; background: var(--ztf-border); margin-top: 3px; overflow: hidden; }
+.ztf-sb-progress-fill { display: block; height: 100%; border-radius: 1px; background: var(--ztf-accent); transition: width .2s ease; }
 
 /* Hover Preview Card */
 #ztf-hover-card {
@@ -268,20 +270,24 @@ button.ztf-sb-group-head:hover { background: var(--ztf-hover); color: var(--ztf-
 .ztf-hc-note { margin-top: 5px; padding: 4px 7px; border-radius: 5px; background: var(--ztf-accent-soft); color: var(--ztf-accent); font-size: 11px; overflow-wrap: anywhere; }
 
 /* Spotlight Command Palette */
-.ztf-spot-box { width: 540px; max-width: calc(100vw - 32px); padding: 10px; font: 13px system-ui, sans-serif; color: var(--ztf-text); }
-.ztf-spot-input { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--ztf-border); border-radius: 7px; background: var(--ztf-card); color: var(--ztf-text); font: inherit; margin-bottom: 8px; outline: none; }
-.ztf-spot-input:focus { border-color: var(--ztf-accent); }
-.ztf-spot-results { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
-.ztf-spot-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; border: 1px solid transparent; background: transparent; color: var(--ztf-text); padding: 7px 10px; border-radius: 6px; cursor: pointer; text-align: start; font: inherit; }
-.ztf-spot-row.active, .ztf-spot-row:hover { background: var(--ztf-accent-soft); border-color: color-mix(in srgb, var(--ztf-accent) 40%, transparent); }
-.ztf-spot-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ztf-spot-hint { color: var(--ztf-muted); font-size: 11px; flex: none; }
-.ztf-spot-empty { padding: 14px; text-align: center; color: var(--ztf-muted); }
+.ztf-spot-box { width: 520px; max-width: calc(100vw - 32px); padding: 10px 12px 12px; font: 13px/1.4 system-ui, -apple-system, sans-serif; color: var(--ztf-text); }
+.ztf-spot-input { width: 100%; box-sizing: border-box; padding: 8px 12px 8px 34px; border: none; border-bottom: 1px solid var(--ztf-border); border-radius: 0; background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%238c959f' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.6'/%3E%3Cpath d='M10.5 10.5L13.8 13.8'/%3E%3C/svg%3E") 10px center no-repeat; color: var(--ztf-text); font: 13.5px/1.4 system-ui, sans-serif; margin-bottom: 6px; outline: none; }
+.ztf-spot-input:focus { border-bottom-color: var(--ztf-accent); }
+.ztf-spot-results { max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-right: 2px; }
+.ztf-spot-section-btn { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 8px 4px; margin-top: 2px; border: none; background: transparent; color: var(--ztf-text); font-size: 12px; font-weight: 600; cursor: pointer; text-align: start; }
+.ztf-spot-section-btn:hover { color: var(--ztf-accent); }
+.ztf-spot-chevron { width: 14px; height: 14px; opacity: 0.65; transition: transform 0.14s ease; flex: none; }
+.ztf-spot-section-btn[data-collapsed="true"] .ztf-spot-chevron { transform: rotate(-90deg); }
+.ztf-spot-row { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 2px; width: 100%; border: 1px solid transparent; background: transparent; color: var(--ztf-text); padding: 6px 8px; border-radius: 7px; cursor: pointer; text-align: start; font: inherit; }
+.ztf-spot-row.active, .ztf-spot-row:hover { background: var(--ztf-accent-soft); border-color: color-mix(in srgb, var(--ztf-accent) 32%, transparent); }
+.ztf-spot-icon { order: 0; flex: none; opacity: 0.85; }
+.ztf-spot-main { order: 1; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--ztf-text); } .ztf-spot-row.active .ztf-spot-main { font-weight: 600; }
+.ztf-spot-sub { order: 2; flex: 1 0 100%; box-sizing: border-box; padding-left: 23px; font-size: 12px; color: var(--ztf-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ztf-spot-meta-row { order: 3; flex: 1 0 100%; box-sizing: border-box; padding-left: 23px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; } .ztf-spot-badge { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: var(--ztf-accent-soft); color: var(--ztf-accent); }
+.ztf-spot-hint { color: var(--ztf-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ztf-spot-empty { padding: 14px; text-align: center; color: var(--ztf-muted); }
 
 /* Sidebar Keyboard Focus, Status Footer & Empty State */
-.ztf-sb-row:focus-visible, button.ztf-sb-group-head:focus-visible {
-  outline: 2px solid var(--ztf-accent); outline-offset: -2px;
-}
+.ztf-sb-row:focus-visible, button.ztf-sb-group-head:focus-visible { outline: 2px solid var(--ztf-accent); outline-offset: -2px; }
 .ztf-sb-status-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap;
   padding: 6px 8px; border-top: 1px solid var(--ztf-border); background: var(--ztf-surface);

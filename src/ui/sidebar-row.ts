@@ -2,6 +2,7 @@ import { TABFLOW_DRAG_MIME, hasTabFlowDraggedTab, hasZoteroDraggedItems, parseZo
 import { t } from '../core/i18n.ts';
 import type { TabFlowStore } from '../core/store.ts';
 import type { TrackedTab, VirtualMemberMeta } from '../core/types.ts';
+import { formatReadingProgress } from '../services/activity-tracker.ts';
 import type { ItemMetadataService } from '../services/item-metadata.ts';
 import type { TabActionService } from '../services/tab-actions.ts';
 import { createSvgIcon, type IconName } from './icons.ts';
@@ -71,10 +72,19 @@ export function buildSidebarTabRow(deps: SidebarRowDeps, item: TrackedTab, selec
 	textWrap.append(title);
 
 	const sub = deps.meta.getDisplaySubtitle(item);
-	if (sub) {
+	const prog = formatReadingProgress(deps.store.state.history[item.key]);
+	const subText = [sub, prog.text].filter(Boolean).join(' · ');
+	if (subText) {
 		const subEl = h('div', 'ztf-sb-row-sub');
-		subEl.textContent = sub;
+		subEl.textContent = subText;
 		textWrap.append(subEl);
+	}
+	if (prog.ratio !== null && prog.ratio > 0) {
+		const bar = h('div', 'ztf-sb-progress');
+		const fill = h('span', 'ztf-sb-progress-fill');
+		if (fill.style) fill.style.width = `${Math.round(prog.ratio * 100)}%`;
+		bar.append(fill);
+		textWrap.append(bar);
 	}
 	row.append(iconWrap, textWrap);
 	const folderBtn = h('button', 'ztf-sb-row-action');

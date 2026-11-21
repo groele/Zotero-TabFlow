@@ -1,7 +1,28 @@
 import { getPref } from '../core/prefs.ts';
 import type { TabFlowStore } from '../core/store.ts';
-import type { TrackedTab } from '../core/types.ts';
+import type { TabActivity, TrackedTab } from '../core/types.ts';
 import type { ItemMetadataService } from './item-metadata.ts';
+
+export function formatReadingDuration(seconds?: number): string {
+	const total = Math.max(0, Math.floor(Number(seconds) || 0));
+	if (total < 60) return '';
+	const mins = Math.floor(total / 60);
+	if (mins < 60) return `${mins}m`;
+	const hrs = Math.floor(mins / 60);
+	const rem = mins % 60;
+	return rem ? `${hrs}h${rem}m` : `${hrs}h`;
+}
+
+export function formatReadingProgress(activity?: TabActivity): { text: string; ratio: number | null } {
+	if (!activity) return { text: '', ratio: null };
+	const dur = formatReadingDuration(activity.readSeconds);
+	const page = Number(activity.lastPage) || 0;
+	const total = Number(activity.totalPages) || 0;
+	const pageText = page > 0 ? (total > 0 ? `p.${page}/${total}` : `p.${page}`) : '';
+	const text = [dur, pageText].filter(Boolean).join(' · ');
+	const ratio = page > 0 && total > 0 ? Math.max(0, Math.min(1, page / total)) : null;
+	return { text, ratio };
+}
 
 export class ActivityTrackerService {
 	private readonly store: TabFlowStore;
@@ -59,5 +80,33 @@ export class ActivityTrackerService {
 			const since = h?.lastViewed ?? h?.firstSeen ?? now;
 			return now - since >= thresholdMs;
 		});
+	}
+
+	trackReadingProgress(win: Window, elapsedSeconds: number, tracked?: readonly TrackedTab[]): boolean {
+		const doc = win.document as Document | undefined;
+		if (typeof doc?.hasFocus === 'function' && !doc.hasFocus()) return false;
+		const selectedID = this.meta.getSelectedTabID();
+		if (!selectedID) return false;
+		const current = (tracked ?? this.meta.buildTrackedTabs()).find((t) => t.tab.id === selectedID);
+		if (!current || current.key.startsWith('tab:') || current.tab.type !== 'reader') return false;
+
+		const now = Date.now();
+		const prev = this.store.state.history[current.key] ?? { firstSeen: now, lastViewed: now };
+		const prevText = formatReadingProgress(prev).text;
+		const reader: any = Zotero.Reader?.getByTabID?.(selectedID);
+		const pdfApp = reader?._iframeWindow?.PDFViewerApplication;
+		const page = Number(pdfApp?.page || (reader?.state?.pageIndex != null ? Number(reader.state.pageIndex) + 1 : 0)) || 0;
+		const total = Number(pdfApp?.pagesCount || reader?.pagesCount || 0) || 0;
+
+		const next: TabActivity = {
+			...prev,
+			lastViewed: now,
+			readSeconds: (prev.readSeconds ?? 0) + Math.max(0, elapsedSeconds),
+			...(page > 0 ? { lastPage: page } : {}),
+			...(total > 0 ? { totalPages: total } : {}),
+		};
+		this.store.state.history[current.key] = next;
+		this.store.scheduleSave();
+		return formatReadingProgress(next).text !== prevText;
 	}
 }

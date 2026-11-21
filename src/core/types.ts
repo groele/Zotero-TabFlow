@@ -28,6 +28,9 @@ export interface TabRemark {
 export interface TabActivity {
 	firstSeen: number;
 	lastViewed: number | null;
+	readSeconds?: number;
+	lastPage?: number;
+	totalPages?: number;
 }
 
 export interface VirtualMemberMeta {

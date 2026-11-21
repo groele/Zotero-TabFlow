@@ -49,6 +49,23 @@ const PREVIEW_CSS = `
 	background: var(--fill-quarternary, color-mix(in srgb, currentColor 14%, transparent)) !important;
 }
 .ztf-pdf-btn:disabled { opacity: 0.32; cursor: default; }
+.ztf-pdf-compare-bar {
+	display: flex; align-items: center; gap: 3px; flex: 1 1 100%; min-inline-size: 0;
+	padding-top: 3px; margin-top: 2px;
+	border-top: 1px dashed var(--fill-quinary, color-mix(in srgb, currentColor 8%, transparent));
+}
+.ztf-pdf-compare-btn { font-size: 11px !important; padding: 0 6px !important; flex-shrink: 0; }
+.ztf-pdf-compare-btn[data-active="true"] {
+	color: var(--accent-blue, #4072e5) !important;
+	background: var(--accent-blue10, rgba(64, 114, 229, 0.14)) !important;
+	border-color: var(--accent-blue30, rgba(64, 114, 229, 0.35)) !important;
+}
+.ztf-pdf-compare-select {
+	flex: 1 1 auto; min-inline-size: 0; block-size: 20px; padding: 0 5px; border-radius: 4px;
+	border: 1px solid var(--fill-quarternary, rgba(127, 127, 127, 0.22));
+	background: var(--material-background, transparent); color: var(--fill-primary, inherit);
+	font: 500 11px/1.2 system-ui, sans-serif; cursor: pointer;
+}
 .ztf-pdf-open-btn {
 	padding: 0 7px !important; color: var(--accent-blue, #4072e5) !important;
 	background: var(--accent-blue10, rgba(64, 114, 229, 0.1)) !important;

@@ -1,5 +1,6 @@
 import { t } from '../core/i18n.ts';
 import { PREF_PREFIX, getPref, invalidatePrefCache, setPref } from '../core/prefs.ts';
+import { resolveCompareItem } from '../services/pdf-compare.ts';
 import {
 	openPdfDocumentFromFile, openPdfInReader, renderPageToCanvas,
 	resolveAllPdfAttachments, resolveAttachmentPath,
@@ -10,6 +11,7 @@ import {
 	ensurePreviewStyles, ensureSectionConnected, evictDistantPageCanvases,
 	isSectionEnabled, logPreviewDebug, openPageJumpInput, removePreviewStyles,
 } from './item-pane-section-compat.ts';
+import { createCompareBar, syncCompareBar, type CompareBarUI, type CompareState } from './pdf-compare-bar.ts';
 
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 2.0;
@@ -25,6 +27,7 @@ interface PreviewState {
 	zoom: number; currentPage: number; numPages: number; lastWidth: number; resizeTimer: number | null; resizeObserver: ResizeObserver | null;
 	slots: PageSlot[]; observer: IntersectionObserver | null; statusEl: HTMLDivElement; pageLabel: HTMLSpanElement; zoomLabel: HTMLButtonElement;
 	prevBtn: HTMLButtonElement; nextBtn: HTMLButtonElement; openBtn: HTMLButtonElement; attSelect: HTMLSelectElement; viewportEl: HTMLDivElement;
+	compare: CompareState; compareUI: CompareBarUI;
 }
 
 export class PdfPreviewSectionController {
@@ -95,18 +98,23 @@ export class PdfPreviewSectionController {
 			const openBtn = toolBtn(doc, t('zotero-tabflow-pdf-preview-open-reader', '在阅读器中打开'), 'zotero-tabflow-pdf-preview-open-reader', 'ztf-pdf-open-btn', 'openReader');
 			zoomGroup.append(zoomOutBtn, zoomLabel, zoomInBtn, modeBtn, openBtn);
 			const attSelect = el(doc, 'select', 'display:none'); attSelect.className = 'ztf-pdf-att-select';
-			toolbar.append(navGroup, zoomGroup, attSelect);
-
+			const compare: CompareState = { mode: 'follow', pickedAttachmentID: null, tabType: tabType || 'library' };
+			const compareUI = createCompareBar(doc, controller.signal, () => state.compare, (nextMode, nextPickedID) => {
+				const prevMode = state.compare.mode; state.compare.mode = nextMode; state.compare.pickedAttachmentID = nextPickedID;
+				syncCompareBar(compareUI, win, state.compare);
+				if ((nextMode === 'self' || (nextMode === 'follow' && prevMode === 'self')) && state.pdfDoc) return;
+				void this.loadItemPreview(state, state.item);
+			});
+			toolbar.append(navGroup, zoomGroup, attSelect, compareUI.bar);
 			const statusEl = el(doc, 'div'); statusEl.className = 'ztf-pdf-status';
 			const viewportEl = el(doc, 'div'); viewportEl.className = 'ztf-pdf-viewport'; viewportEl.setAttribute('tabindex', '0');
 			root.append(toolbar, statusEl, viewportEl); body.append(root);
-
 			const state: PreviewState = {
 				doc, win, body, root, customSection, collapsible, setSectionSummary,
 				item: null, attachment: null, attachments: [], pdfDoc: null, loading: false, generation: 0,
 				fullActive: getPref('pdfPreviewMode') === 'full', zoom: Math.round(getPref('pdfPreviewDefaultZoom')) / 100,
 				currentPage: 0, numPages: 0, lastWidth: 0, resizeTimer: null, resizeObserver: null,
-				slots: [], observer: null, statusEl, pageLabel, zoomLabel, prevBtn, nextBtn, openBtn, attSelect, viewportEl,
+				slots: [], observer: null, statusEl, pageLabel, zoomLabel, prevBtn, nextBtn, openBtn, attSelect, viewportEl, compare, compareUI,
 			};
 			root.setAttribute('data-show-badge', getPref('pdfPreviewShowPageBadge') ? 'true' : 'false');
 			this.states.set(body, state);
@@ -202,7 +210,12 @@ export class PdfPreviewSectionController {
 			this.disposeDocument(state, true); applyStatusMessage(state.statusEl, ''); return;
 		}
 		applyPreviewLayoutMode(state.body, state.root, state.customSection, state.fullActive && getPref('pdfPreviewMode') === 'full');
-		if (item && state.item === item && (state.pdfDoc || state.loading)) return;
+		state.compare.tabType = tabType || 'library';
+		if (state.compare.tabType !== 'reader') { state.compare.mode = 'follow'; state.compare.pickedAttachmentID = null; }
+		syncCompareBar(state.compareUI, state.win, state.compare);
+		const keepCompare = state.compare.tabType === 'reader' && (state.compare.mode === 'pick' || state.compare.mode === 'self');
+		if (keepCompare && (state.pdfDoc || state.loading)) return;
+		if (item && state.item === item && (state.pdfDoc || state.loading) && state.compare.mode === 'follow') return;
 		state.item = item ?? null; void this.loadItemPreview(state, state.item);
 	}
 
@@ -231,76 +244,63 @@ export class PdfPreviewSectionController {
 	private async loadItemPreview(state: PreviewState, item: any): Promise<void> {
 		this.disposeDocument(state, true);
 		const gen = state.generation;
-		if (!item) { applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return; }
+		let targetItem = item;
+		if (state.compare.tabType === 'reader' && state.compare.mode !== 'follow') {
+			state.loading = true; applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-loading');
+			const resolved = await resolveCompareItem(state.win, state.compare.mode, state.compare.pickedAttachmentID, item);
+			if (state.generation !== gen) return;
+			targetItem = resolved.item;
+		}
+		if (!targetItem) { state.loading = false; applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return; }
 		state.loading = true; applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-loading');
-		const entries = await resolveAllPdfAttachments(item);
+		const entries = await resolveAllPdfAttachments(targetItem);
 		if (state.generation !== gen) return;
 		state.attachments = entries;
 		if (entries.length > 1) {
 			state.attSelect.textContent = '';
-			entries.forEach((entry, idx) => {
-				const opt = el(state.doc, 'option'); opt.value = String(entry.id); opt.textContent = `${idx + 1}. ${entry.title}`;
-				state.attSelect.append(opt);
-			});
+			entries.forEach((entry, idx) => { const opt = el(state.doc, 'option'); opt.value = String(entry.id); opt.textContent = `${idx + 1}. ${entry.title}`; state.attSelect.append(opt); });
 			state.attSelect.style.display = 'block';
 		} else state.attSelect.style.display = 'none';
-		if (!entries.length) {
-			state.loading = false; ensureSectionConnected(state.body, state.root, state.customSection, state.collapsible);
-			applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return;
-		}
+		if (!entries.length) { state.loading = false; ensureSectionConnected(state.body, state.root, state.customSection, state.collapsible); applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return; }
 		await this.loadAttachmentDocument(state, entries[0].attachment);
 	}
-
 	private async loadAttachmentDocument(state: PreviewState, att: any): Promise<void> {
-		this.disposeDocument(state, false);
-		const gen = state.generation;
-		state.loading = true; state.attachment = att; this.syncControls(state);
-		applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-loading');
+		this.disposeDocument(state, false); const gen = state.generation;
+		state.loading = true; state.attachment = att; this.syncControls(state); applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-loading');
 		try {
 			const filePath = await resolveAttachmentPath(att);
 			if (state.generation !== gen) return;
 			if (!filePath) { state.loading = false; applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-missing-file'); return; }
 			const pdfDoc = await openPdfDocumentFromFile(filePath, state.doc);
 			if (state.generation !== gen) { void Promise.resolve(pdfDoc.destroy?.()).catch(() => {}); return; }
-			state.loading = false; state.pdfDoc = pdfDoc;
-			state.numPages = Math.max(0, pdfDoc.numPages || 0); state.currentPage = state.numPages > 0 ? 1 : 0;
+			state.loading = false; state.pdfDoc = pdfDoc; state.numPages = Math.max(0, pdfDoc.numPages || 0); state.currentPage = state.numPages > 0 ? 1 : 0;
 			ensureSectionConnected(state.body, state.root, state.customSection, state.collapsible);
 			if (!state.numPages) { applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-unavailable'); return; }
 			applyStatusMessage(state.statusEl, ''); this.buildPageSlots(state, gen); this.syncControls(state);
 		} catch (error) {
 			if (state.generation !== gen) return;
-			state.loading = false; Zotero.logError(error instanceof Error ? error : new Error(String(error)));
-			applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-error');
+			state.loading = false; Zotero.logError(error instanceof Error ? error : new Error(String(error))); applyStatusMessage(state.statusEl, 'zotero-tabflow-pdf-preview-error');
 		}
 	}
-
 	private buildPageSlots(state: PreviewState, gen: number): void {
-		state.viewportEl.textContent = ''; state.slots = [];
-		const frag = state.doc.createDocumentFragment();
+		state.viewportEl.textContent = ''; state.slots = []; const frag = state.doc.createDocumentFragment();
 		for (let p = 1; p <= state.numPages; p++) {
-			const card = el(state.doc, 'div'); card.className = 'ztf-pdf-page-card';
-			card.setAttribute('data-unrendered', 'true'); card.setAttribute('data-page-number', String(p));
+			const card = el(state.doc, 'div'); card.className = 'ztf-pdf-page-card'; card.setAttribute('data-unrendered', 'true'); card.setAttribute('data-page-number', String(p));
 			const canvas = el(state.doc, 'canvas'); canvas.className = 'ztf-pdf-canvas';
 			const badge = el(state.doc, 'span'); badge.className = 'ztf-pdf-page-badge'; badge.textContent = String(p);
 			card.addEventListener('dblclick', (e: MouseEvent) => { if (state.attachment && getPref('pdfPreviewDoubleClickOpen')) { e.preventDefault?.(); e.stopPropagation?.(); void openPdfInReader(state.attachment, state.win, p); } });
-			card.append(canvas, badge); frag.append(card);
-			state.slots.push({ pageNumber: p, card, canvas, renderedZoom: null, rendering: false, lastHeight: 0 });
+			card.append(canvas, badge); frag.append(card); state.slots.push({ pageNumber: p, card, canvas, renderedZoom: null, rendering: false, lastHeight: 0 });
 		}
 		state.viewportEl.append(frag);
 		const Observer = (state.win as Window & typeof globalThis).IntersectionObserver;
 		if (Observer) {
 			state.observer = new Observer((entries) => {
 				if (state.generation !== gen) return;
-				for (const entry of entries) {
-					if (!entry.isIntersecting) continue;
-					const slot = state.slots.find((s) => s.card === entry.target);
-					if (slot) void this.renderSlot(state, slot, gen);
-				}
+				for (const entry of entries) { if (entry.isIntersecting) { const slot = state.slots.find((s) => s.card === entry.target); if (slot) void this.renderSlot(state, slot, gen); } }
 			}, { root: state.viewportEl, rootMargin: '320px 0px', threshold: 0.01 });
 			for (const slot of state.slots) state.observer.observe(slot.card);
 		}
-		void this.renderSlot(state, state.slots[0], gen);
-		if (state.slots[1]) void this.renderSlot(state, state.slots[1], gen);
+		void this.renderSlot(state, state.slots[0], gen); if (state.slots[1]) void this.renderSlot(state, state.slots[1], gen);
 	}
 
 	private async renderSlot(state: PreviewState, slot: PageSlot, gen: number): Promise<void> {

@@ -33,6 +33,7 @@ class WindowWorkspace {
 	private refreshTimer: number | null = null;
 	private resizeTimer: number | null = null;
 	private ageTimer: number | null = null;
+	private readingTimer: number | null = null;
 	private autoGroupTimer: number | null = null;
 	private pendingAutoGroup = new Set<string>();
 	private lastSelected = '';
@@ -132,6 +133,9 @@ class WindowWorkspace {
 			if (slept || (showTime && this.tracked.length) || staleCount !== this.staleCount) this.schedule();
 			this.onAgeTick();
 		}, 60_000);
+		this.readingTimer = this.win.setInterval(() => {
+			if (this.tracker.trackReadingProgress(this.win, 15, this.tracked)) this.schedule();
+		}, 15_000);
 	}
 
 	private onTabsAdded(ids: Array<string | number>): boolean {
@@ -205,6 +209,7 @@ class WindowWorkspace {
 		if (this.resizeTimer !== null) this.win.clearTimeout(this.resizeTimer);
 		if (this.refreshTimer !== null) this.win.clearTimeout(this.refreshTimer);
 		if (this.ageTimer !== null) this.win.clearInterval(this.ageTimer);
+		if (this.readingTimer !== null) this.win.clearInterval(this.readingTimer);
 		if (this.autoGroupTimer !== null) this.win.clearTimeout(this.autoGroupTimer);
 		this.pendingAutoGroup.clear();
 		this.observer?.disconnect();
