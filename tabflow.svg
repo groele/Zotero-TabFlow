@@ -1,9 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
-  <rect x="6" y="10" width="52" height="44" rx="10" stroke="#245AC7" stroke-width="4"/>
-  <path d="M22 10v44" stroke="#245AC7" stroke-width="4"/>
-  <path d="M22 23h36" stroke="#245AC7" stroke-width="3.5"/>
-  <rect x="12" y="18" width="4" height="8" rx="2" fill="#245AC7"/>
-  <rect x="12" y="30" width="4" height="8" rx="2" fill="#4FB286"/>
-  <rect x="12" y="42" width="4" height="6" rx="2" fill="#E36D6D"/>
-  <rect x="28" y="15" width="14" height="4" rx="2" fill="#F6B433"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="64" height="64" fill="none" role="img" aria-label="Zotero TabFlow">
+  <title>Zotero TabFlow</title>
+  <desc>Fanned multi-color paper tab cards representing grouped reading tabs and workspace sessions in Zotero TabFlow.</desc>
+  <defs>
+    <linearGradient id="tF1" x1="16" y1="30" x2="72" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F472B6" />
+      <stop offset="100%" stop-color="#E11D48" />
+    </linearGradient>
+    <linearGradient id="tF2" x1="30" y1="22" x2="86" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FBBF24" />
+      <stop offset="100%" stop-color="#F97316" />
+    </linearGradient>
+    <linearGradient id="tF3" x1="44" y1="16" x2="102" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="100%" stop-color="#0D9488" />
+    </linearGradient>
+    <linearGradient id="tF4" x1="52" y1="22" x2="112" y2="106" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+  </defs>
+  <rect x="20" y="34" width="52" height="72" rx="13" transform="rotate(-18 46 70)" fill="url(#tF1)" />
+  <rect x="32" y="28" width="52" height="72" rx="13" transform="rotate(-7 58 64)" fill="url(#tF2)" />
+  <rect x="44" y="24" width="52" height="72" rx="13" transform="rotate(4 70 60)" fill="url(#tF3)" />
+  <rect x="54" y="24" width="54" height="74" rx="14" transform="rotate(14 81 61)" fill="url(#tF4)" />
+  <rect x="66" y="42" width="28" height="7" rx="3.5" transform="rotate(14 80 45)" fill="#FFFFFF" fill-opacity="0.92" />
+  <rect x="63" y="56" width="20" height="6.5" rx="3.25" transform="rotate(14 73 59)" fill="#E0F2FE" fill-opacity="0.8" />
 </svg>
