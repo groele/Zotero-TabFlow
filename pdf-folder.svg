@@ -1,31 +1,50 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="20" height="20" fill="none" role="img" aria-label="Open PDF Folder">
   <title>Open PDF Folder</title>
-  <desc>Full-optical-scale airy wire-frame folder with coral-orange launch arrow aligned with the Zotero Flow icon family.</desc>
+  <desc>Refined open-flap folder revealing a crisp crimson-accented PDF sheet, paired with Zotero TabFlow PDF Preview.</desc>
   <defs>
-    <linearGradient id="ztfFolderStroke" x1="12" y1="24" x2="108" y2="112" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38BDF8" />
+    <linearGradient id="ztfFBack" x1="12" y1="20" x2="104" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3B82F6" />
       <stop offset="55%" stop-color="#2563EB" />
-      <stop offset="100%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#1D4ED8" />
     </linearGradient>
-    <linearGradient id="ztfFolderFill" x1="14" y1="30" x2="106" y2="110" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.20" />
-      <stop offset="100%" stop-color="#2563EB" stop-opacity="0.09" />
+    <linearGradient id="ztfFPaper" x1="42" y1="16" x2="94" y2="68" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#F1F5F9" />
     </linearGradient>
-    <linearGradient id="ztfFolderArrow" x1="68" y1="16" x2="116" y2="64" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#FB923C" />
-      <stop offset="100%" stop-color="#F43F5E" />
+    <linearGradient id="ztfFPdfAccent" x1="48" y1="22" x2="86" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF4B4B" />
+      <stop offset="55%" stop-color="#E11D2E" />
+      <stop offset="100%" stop-color="#B91C1C" />
     </linearGradient>
+    <linearGradient id="ztfFFront" x1="22" y1="50" x2="114" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7DD3FC" />
+      <stop offset="42%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+    <linearGradient id="ztfFRim" x1="36" y1="52" x2="108" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.82" />
+      <stop offset="100%" stop-color="#BAE6FD" stop-opacity="0.38" />
+    </linearGradient>
+    <filter id="ztfFPaperShadow" x="-15%" y="-15%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.22" />
+    </filter>
   </defs>
 
-  <!-- Soft Translucent Folder Body -->
-  <path d="M 14 36 C 14 28.5 19.5 23 27 23 H 50 L 62 35 H 96 C 103.5 35 109 40.5 109 48 V 98 C 109 105.5 103.5 111 96 111 H 27 C 19.5 111 14 105.5 14 98 Z" fill="url(#ztfFolderFill)" />
+  <!-- Back Folder Shell with Rounded Tab -->
+  <path d="M 12 34 C 12 25.2 19.2 18 28 18 H 48.5 C 52.2 18 55.7 19.6 58.1 22.4 L 64.5 30 H 95 C 103.3 30 110 36.7 110 45 V 95 C 110 103.3 103.3 110 95 110 H 27 C 18.7 110 12 103.3 12 95 Z" fill="url(#ztfFBack)" />
 
-  <!-- Open Wire-Frame Folder Outline (leaves top-right open for launch arrow) -->
-  <path d="M 65 35 H 52 L 42 23 H 27 C 19.5 23 14 28.5 14 36 V 98 C 14 105.5 19.5 111 27 111 H 96 C 103.5 111 109 105.5 109 98 V 68" stroke="url(#ztfFolderStroke)" stroke-width="11.5" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Peeking PDF Document Sheet inside Pocket -->
+  <g filter="url(#ztfFPaperShadow)">
+    <path d="M 41 25 C 41 20.6 44.6 17 49 17 H 82.5 L 96 30.5 V 68 H 41 Z" fill="url(#ztfFPaper)" />
+    <path d="M 82 17 V 27.5 C 82 29.4 83.6 31 85.5 31 H 96" fill="#CBD5E1" />
+    <rect x="51" y="27" width="22" height="7.5" rx="3.75" fill="url(#ztfFPdfAccent)" />
+    <rect x="51" y="40" width="33" height="6" rx="3" fill="#94A3B8" fill-opacity="0.55" />
+  </g>
 
-  <!-- Subtle Inner Folder Flap Line -->
-  <path d="M 16 54 H 66" stroke="#0EA5E9" stroke-width="10" stroke-linecap="round" opacity="0.88" />
+  <!-- Tilted Open Front Flap -->
+  <path d="M 27 56 C 29.1 49.5 35.1 45 42 45 H 106.5 C 113.8 45 119.1 52 116.9 59 L 104.2 99.5 C 102.2 105.8 96.4 110 89.8 110 H 25 C 17.8 110 12.6 103 14.8 96.1 Z" fill="url(#ztfFFront)" fill-opacity="0.96" />
 
-  <!-- Breaking-Out Coral-Orange Launch Arrow -->
-  <path d="M 78 50 L 112 16 M 86 16 H 112 V 42" stroke="url(#ztfFolderArrow)" stroke-width="12.5" stroke-linecap="round" stroke-linejoin="round" />
+  <!-- Crisp Specular Rim & Subtle Grip Pill -->
+  <path d="M 42 49.5 H 104.5" stroke="url(#ztfFRim)" stroke-width="3.5" stroke-linecap="round" />
+  <rect x="52" y="74" width="28" height="6.5" rx="3.25" fill="#FFFFFF" fill-opacity="0.34" />
 </svg>
